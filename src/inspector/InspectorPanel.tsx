@@ -263,7 +263,7 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
           disabled={!details.isDir || dupesRunning}
           title={
             !details.isDir
-              ? "Duplicates scans a folder — select a folder to scope it"
+              ? "Duplicates scans a folder. Select a folder to scope it"
               : dupesRunning
                 ? "A duplicates scan is already running"
                 : isVirtualRoot

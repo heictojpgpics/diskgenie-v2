@@ -128,7 +128,13 @@ fn run_population(
     }
     candidates.sort_by(|a, b| a.path.cmp(&b.path));
 
-    let groups = engine::run(&candidates, cfg, &QuietSink)
+    // The engine takes a hardlink closure so it can capture
+    // (volume_serial, file_index) from each verified member's
+    // already-open File handle. This test doesn't check hardlink
+    // identity, so pass a no-op that returns None (the caller
+    // falls back to node_id as the file index).
+    let no_hardlink = |_f: &std::fs::File| -> Option<(u64, u64)> { None };
+    let groups = engine::run(&candidates, cfg, &QuietSink, &no_hardlink)
         .unwrap()
         .into_iter()
         .map(|g| (g.size, g.files.len()))

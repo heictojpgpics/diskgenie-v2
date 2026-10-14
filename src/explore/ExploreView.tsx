@@ -279,10 +279,11 @@ export function ExploreView({ onPreview }: { onPreview: (id: number) => void }) 
           <span className="db-idle-art">
             <FolderIcon size={34} />
           </span>
-          <h2>Map every byte on your {MACHINE_NOUN}</h2>
+          <h2>See where your space went</h2>
           <p>
-            Scan your whole {MACHINE_NOUN}, your Home folder, or any folder — DiskGenie builds a
-            complete tree and shows you exactly where the space went.
+            Pick a target and DiskGenie maps every file and folder. You get a live
+            tree you can drill into, filter, and clean up. Whole {MACHINE_NOUN},
+            your Home folder, or any single folder. Your call.
           </p>
           <div className="db-state-actions">
             <button

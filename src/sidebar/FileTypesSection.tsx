@@ -50,7 +50,7 @@ export function FileTypesSection() {
       </div>
       <div className="db-types-legend">
         {segs.map((s) => (
-          <button key={s.label} type="button" onClick={() => setTab("explore")} title={`${s.label} — ${bytes(s.size)}`}>
+          <button key={s.label} type="button" onClick={() => setTab("explore")} title={`${s.label} · ${bytes(s.size)}`}>
             <i style={{ background: css(s.color) }} />
             <span>{s.label}</span>
             <b className="tnum">{bytes(s.size)}</b>

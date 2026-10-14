@@ -68,7 +68,7 @@ export function AgeMapMode(props: AgeMapModeProps) {
     return (
       <div className="db-loading-block" role="status">
         <Spinner />
-        <span>{stale ? "Scan changed — reloading…" : "Bucketing by age…"}</span>
+        <span>{stale ? "Scan changed. Reloading…" : "Bucketing by age…"}</span>
       </div>
     );
   }
@@ -147,7 +147,7 @@ export function AgeMapMode(props: AgeMapModeProps) {
                   key={mi}
                   className={`${isBusiest ? "busiest" : ""} ${labeled ? "labeled" : ""}`}
                   style={{ ["--heat" as string]: Math.max(0.08, frac).toFixed(2) }}
-                  title={`${MONTH_NAMES[mi]} ${y} — ${bytes(v)}`}
+                  title={`${MONTH_NAMES[mi]} ${y} · ${bytes(v)}`}
                 >
                   {labeled && <b className="tnum">{bytes(v)}</b>}
                 </i>
@@ -212,7 +212,7 @@ export function AgeMapMode(props: AgeMapModeProps) {
                   type="button"
                   className={`db-stage-toggle ${staged ? "staged" : ""}`}
                   aria-label={staged ? `Unstage ${row.name}` : `Stage ${row.name}`}
-                  title={staged ? "Staged — click to unstage" : "Stage for cleanup"}
+                  title={staged ? "Staged. Click to unstage" : "Stage for cleanup"}
                   disabled={row.protected}
                   onClick={(e) => {
                     e.stopPropagation();

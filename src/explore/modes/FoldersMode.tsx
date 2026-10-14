@@ -128,7 +128,7 @@ export function FoldersMode(props: FoldersModeProps) {
             ))}
           </div>
           <div className="db-loading-block" role="status">
-            <span>{stale ? "Scan changed — reloading…" : "Loading folders…"}</span>
+            <span>{stale ? "Scan changed. Reloading…" : "Loading folders…"}</span>
           </div>
         </div>
       </div>

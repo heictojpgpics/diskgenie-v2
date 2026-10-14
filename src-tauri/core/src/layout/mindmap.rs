@@ -402,7 +402,18 @@ fn layout_branches(
         if c.is_removed() || c.on_disk == 0 {
             continue;
         }
-        let span = c.on_disk as f32 / total as f32 * (a1 - a0);
+        // Ring 1 (depth_here == 1): EVEN angular distribution so a
+        // 95%-dominant drive no longer eats 95% of the circle (the
+        // reference design shows N evenly-spaced spokes from the
+        // hub, with weight reflected ONLY in dot radius — see line
+        // 443's `sqrt(share of the ROOT)` cap). Deeper rings keep
+        // weight-based distribution so the radial pattern still
+        // reflects sub-folder sizing.
+        let span = if depth_here == 1 {
+            (a1 - a0) / children.len().max(1) as f32
+        } else {
+            c.on_disk as f32 / total as f32 * (a1 - a0)
+        };
         let mid = cursor + span / 2.0;
         let is_spine = spine == Some(id);
         // Position: normal children sit at the ring radius along their
@@ -453,15 +464,20 @@ fn layout_branches(
         // Family rule (v2): fresh at the spine head's children (ring 1)
         // AND at the layout root's own children (a second drive gets
         // its own family, not ring 1's first); inherited below.
+        // Family color is now name-based, resolved inside `node_color` from
+        // `branch_root` + `id`; the legacy `fam` index is no longer used
+        // for coloring (kept for inheritance threading).
         let fam = if node == branch_root || depth_here == 1 {
             i
         } else {
             top_index
         };
         let rgb = match color {
-            ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, i),
+            ColorMode::ByFolder => {
+                node_color(tree, id, color, now, branch_root, depth_here as u16, i)
+            }
             ColorMode::ByType => c.category().color(),
-            ColorMode::ByAge => node_color(tree, id, color, now, 0, 0, i),
+            ColorMode::ByAge => node_color(tree, id, color, now, branch_root, 0, i),
         };
         // The spine chain + ring 1 stay solid; deeper child dots get
         // the slightly translucent tier.

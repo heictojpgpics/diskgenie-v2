@@ -137,7 +137,7 @@ type Placed = (usize, f32, f32, f32);
 /// Emit the circle for `b` at `(cx, cy)` with radius `drawn_r`, then
 /// allocate + pack + recursively emit its children inside. `top_index` is
 /// the inherited by-folder family; `branch_root`'s children re-assign it.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn emit(
     tree: &Tree,
     b: &Bubble,
@@ -159,12 +159,15 @@ fn emit(
     if drawn_r < MIN_R {
         return;
     }
+    // Family color is now name-based, resolved inside `node_color` from
+    // `branch_root` + `b.id`. The legacy `top_index` is no longer used
+    // for coloring; it's kept for shade variation (passed as the index).
     let rgb = match color {
         ColorMode::ByFolder => {
-            node_color(tree, b.id, color, now, top_index, depth as u16, top_index)
+            node_color(tree, b.id, color, now, branch_root, depth as u16, top_index)
         }
         ColorMode::ByType => tree.dominant_category(b.id).color(),
-        ColorMode::ByAge => node_color(tree, b.id, color, now, 0, 0, top_index),
+        ColorMode::ByAge => node_color(tree, b.id, color, now, branch_root, 0, top_index),
     };
     // Primary tier: the root/chain containers and the effective top-level
     // branches (soft fill); deeper descendants are the nested tier.
@@ -224,6 +227,26 @@ fn emit(
         };
         let mut lo = 0.0f32; // feasible (degenerate point)
         let mut hi = 1.0f32; // infeasible (extent(1.0) = needed > usable)
+                             // Front-chain packing can produce extent(1.0) <= usable (the
+                             // pack is denser than concentric rings). If so, the bisection
+                             // would never explore above 1.0 — so first probe upward to
+                             // find a true infeasible hi (extent > usable), bounded at 4×
+                             // so we don't loop forever on degenerate inputs.
+        if pack_at(&mut kids, hi) <= usable {
+            let mut step = 1.0f32;
+            while hi < 4.0 {
+                let probe = hi + step;
+                if pack_at(&mut kids, probe) > usable {
+                    hi = probe;
+                    break;
+                }
+                hi = probe;
+                step *= 1.5;
+            }
+            // If still feasible at 4×, the children are degenerate
+            // (radii so small they never reach usable) — just keep
+            // the pack at hi and accept the gap.
+        }
         for _ in 0..24 {
             let mid = 0.5 * (lo + hi);
             if pack_at(&mut kids, mid) <= usable {
@@ -233,6 +256,32 @@ fn emit(
             }
         }
         let _ = pack_at(&mut kids, lo);
+        // Final uniform scale to make the pack EXACTLY tangent to the
+        // usable rim. The bisection converges to the boundary but the
+        // last pack_at(lo) might leave a sub-pixel gap. Scale all
+        // positions AND radii by (usable / extent) so the outermost
+        // child reaches the rim. This is safe because the pack is
+        // already non-overlapping at lo, and uniform scaling preserves
+        // non-overlap (it's a similarity transform).
+        let final_extent = extent(&kids);
+        if final_extent > 0.0 && final_extent < usable {
+            let k = usable / final_extent;
+            for kid in &mut kids {
+                kid.1 *= k;
+                kid.2 *= k;
+                kid.3 *= k;
+            }
+        }
+    } else if needed < usable && needed > 0.0 {
+        // Front-chain packing can produce extent < usable even at
+        // scale 1.0 (denser than concentric rings). Scale up to fill
+        // the rim (same uniform scale, preserves ratios + non-overlap).
+        let k = usable / needed;
+        for kid in &mut kids {
+            kid.1 *= k;
+            kid.2 *= k;
+            kid.3 *= k;
+        }
     }
     for (i, (child_idx, x, y, r)) in kids.iter().enumerate() {
         emit(
@@ -253,62 +302,145 @@ fn emit(
     }
 }
 
-/// Pack circles on concentric rings (largest first): the largest starts at
-/// the center, subsequent circles go on rings outside the already-placed
-/// extent; each ring holds children until the next would not fit
-/// tangentially. Positions are relative to the parent's center; radii are
-/// the allocated drawn radii.
+/// Pack circles using a front-chain tangent algorithm (D3-pack style):
+/// the largest sits at center, each subsequent circle is placed tangent
+/// to two already-placed circles, choosing the position with the
+/// smallest enclosing radius. Produces tight nestle packing instead
+/// of concentric "target rings" (the legacy ring-pack pattern that
+/// looked bad on real disks with 1 dominant + many tiny children).
+///
+/// The reference design (upload/extracted/refrence/bubbles.png) shows
+/// D3-style front-chain packing where small bubbles nestle against
+/// the big one, NOT concentric rings.
 fn ring_pack(kids: &mut [Placed]) {
     if kids.is_empty() {
         return;
     }
     // Largest first (sort by allocated radius).
     kids.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-    let mut placed = 0usize;
-    let mut ring_r = 0.0f32; // enclosing radius of everything placed so far
-    while placed < kids.len() {
-        let r1 = kids[placed].3;
-        let ring_center_r = if ring_r == 0.0 { 0.0 } else { ring_r + r1 };
-        if ring_center_r <= 0.0 {
-            // Largest bubble sits at the center.
-            kids[placed].1 = 0.0;
-            kids[placed].2 = 0.0;
-            ring_r = r1;
-            placed += 1;
-            continue;
-        }
-        // How many of the remaining fit on this ring, tangentially?
-        let mut count = 1usize;
-        let mut angle_used = 0.0f32;
-        let mut i = placed + 1;
-        while i < kids.len() {
-            let r2 = kids[i].3;
-            // Chord needed for two adjacent bubbles r1..r2 on the ring.
-            let half = (r1 + r2 + GAP) / 2.0;
-            let ratio = (half / ring_center_r).clamp(0.0, 1.0);
-            // ratio >= 1 means they cannot share this ring even opposite.
-            let theta = if ratio >= 1.0 {
-                std::f32::consts::PI
-            } else {
-                2.0 * ratio.asin()
-            };
-            if angle_used + theta > std::f32::consts::TAU {
-                break;
+    if kids.len() == 1 {
+        kids[0].1 = 0.0;
+        kids[0].2 = 0.0;
+        return;
+    }
+    // Place the largest at center.
+    kids[0].1 = 0.0;
+    kids[0].2 = 0.0;
+    // Place the second tangent to the first (to the right).
+    let r0 = kids[0].3;
+    let r1 = kids[1].3;
+    let d01 = r0 + r1 + GAP;
+    kids[1].1 = d01;
+    kids[1].2 = 0.0;
+    // For each subsequent circle, find the best tangent position:
+    // tangent to a pair of already-placed circles, with the smallest
+    // enclosing radius (closest to center). This is the "front-chain"
+    // greedy that produces tight nestle packing.
+    for i in 2..kids.len() {
+        let ri = kids[i].3;
+        let mut best_x = 0.0f32;
+        let mut best_y = 0.0f32;
+        let mut best_dist_sq = f32::INFINITY;
+        // Try tangent to each pair of placed circles (j, k).
+        for j in 0..i {
+            for k in (j + 1)..i {
+                let rj = kids[j].3;
+                let rk = kids[k].3;
+                if let Some((x, y)) =
+                    tangent_position(kids[j].1, kids[j].2, rj, kids[k].1, kids[k].2, rk, ri)
+                {
+                    let dist_sq = x * x + y * y;
+                    if dist_sq >= best_dist_sq {
+                        continue;
+                    }
+                    // Check overlap with ALL placed circles (the new
+                    // position must not overlap any of them).
+                    let mut overlaps = false;
+                    for kid in kids.iter().take(i) {
+                        let rm = kid.3;
+                        let dx = x - kid.1;
+                        let dy = y - kid.2;
+                        let min_dist = ri + rm + GAP;
+                        if dx * dx + dy * dy < min_dist * min_dist {
+                            overlaps = true;
+                            break;
+                        }
+                    }
+                    if !overlaps {
+                        best_dist_sq = dist_sq;
+                        best_x = x;
+                        best_y = y;
+                    }
+                }
             }
-            angle_used += theta;
-            count += 1;
-            i += 1;
         }
-        // Place `count` bubbles evenly around the ring.
-        let step = std::f32::consts::TAU / count as f32;
-        let mut angle = 0.0f32;
-        for kid in &mut kids[placed..placed + count] {
-            kid.1 = ring_center_r * angle.cos();
-            kid.2 = ring_center_r * angle.sin();
-            angle += step;
+        // Fallback: if no tangent-to-pair position was non-overlapping
+        // (rare edge case with many equal-sized circles), place on a
+        // ring outside everything that's been placed.
+        if best_dist_sq == f32::INFINITY {
+            let max_extent: f32 = kids
+                .iter()
+                .take(i)
+                .map(|kid| {
+                    let rm = kid.3;
+                    ((kid.1).powi(2) + (kid.2).powi(2)).sqrt() + rm
+                })
+                .fold(0.0f32, f32::max);
+            best_x = max_extent + ri + GAP;
+            best_y = 0.0;
         }
-        ring_r = ring_center_r + kids[placed].3;
-        placed += count;
+        kids[i].1 = best_x;
+        kids[i].2 = best_y;
+    }
+}
+
+/// Find a position where a circle of radius `ri` is tangent to both
+/// circle j (center `xj,yj`, radius `rj`) and circle k (center `xk,yk`,
+/// radius `rk`). Returns the position closest to the origin (smallest
+/// enclosing radius). `None` when the two circles are too far apart or
+/// too close for a tangent circle to exist, or when j and k share the
+/// same center.
+fn tangent_position(
+    xj: f32,
+    yj: f32,
+    rj: f32,
+    xk: f32,
+    yk: f32,
+    rk: f32,
+    ri: f32,
+) -> Option<(f32, f32)> {
+    let dx = xk - xj;
+    let dy = yk - yj;
+    let d_sq = dx * dx + dy * dy;
+    if d_sq < 1e-6 {
+        return None; // j and k share the same center
+    }
+    let d = d_sq.sqrt();
+    let dij = rj + ri + GAP; // distance from j's center to the new center
+    let dik = rk + ri + GAP; // distance from k's center to the new center
+                             // Triangle inequality: |dij - dik| <= d <= dij + dik
+    if d > dij + dik || d < (dij - dik).abs() {
+        return None;
+    }
+    // Intersection of two circles: the new center lies on the line
+    // from j to k, offset by `a` from j, at perpendicular height `h`.
+    let a = (dij * dij - dik * dik + d_sq) / (2.0 * d);
+    let h_sq = (dij * dij - a * a).max(0.0);
+    let h = h_sq.sqrt();
+    let xm = xj + a * dx / d;
+    let ym = yj + a * dy / d;
+    // Two solutions (above and below the jk line).
+    let x3 = xm + h * dy / d;
+    let y3 = ym - h * dx / d;
+    let x4 = xm - h * dy / d;
+    let y4 = ym + h * dx / d;
+    // Pick the one closest to origin (smallest enclosing radius).
+    let d3 = x3 * x3 + y3 * y3;
+    let d4 = x4 * x4 + y4 * y4;
+    if d3 <= d4 {
+        Some((x3, y3))
+    } else {
+        Some((x4, y4))
     }
 }
 

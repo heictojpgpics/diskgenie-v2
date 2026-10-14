@@ -370,6 +370,42 @@ pub fn hardlink_identity(path: &std::path::Path) -> Option<(u64, u64)> {
     }))
 }
 
+/// Same as [`hardlink_identity`] but accepts an ALREADY-OPEN handle
+/// (the dupes engine's verify pass has one positioned past the
+/// screens — reusing it saves the THIRD `File::open` per verified
+/// member that the v2 caller used to do). On Windows with Defender
+/// active, each `File::open` triggers a scan at 5-50 ms; 10k
+/// verified files × 20 ms = 200 s of pure open latency AFTER the
+/// verify pass finishes — that's the "engine is hung on Done" the
+/// user reported.
+///
+/// Returns `None` when the handle is invalid or the platform
+/// call fails (the caller falls back to `node_id` as the file
+/// index).
+pub fn hardlink_identity_for_handle(file: &std::fs::File) -> Option<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: valid file handle (the caller owns it); sized out-struct.
+    if unsafe {
+        GetFileInformationByHandle(
+            windows::Win32::Foundation::HANDLE(file.as_raw_handle()),
+            &mut info,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
+    Some((u64::from(info.dwVolumeSerialNumber), {
+        let lo = u64::from(info.nFileIndexLow);
+        let hi = u64::from(info.nFileIndexHigh);
+        (hi << 32) | lo
+    }))
+}
+
 /// Windows version for the license device facts (audit field; D1 stores
 /// it with the device registration). `RtlGetVersion` is the
 /// manifest-lie-proof source (GetVersionEx lies without a shim).

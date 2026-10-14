@@ -146,11 +146,17 @@ fn layout_children(
         }
         // One pastel family per effective top-level branch, inherited by
         // every descendant (shade still varies by depth + sibling index).
+        // Family is now resolved name-based inside `node_color` from
+        // `branch_root` + `id`, so the legacy `fam` index is no longer
+        // needed for coloring. It's still threaded for inheritance so
+        // a future color mode can use it without re-plumbing.
         let fam = crate::layout::family_of(parent, branch_root, i, family);
         let rgba = pack_rgba(match color {
-            ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, i),
+            ColorMode::ByFolder => {
+                node_color(tree, id, color, now, branch_root, depth_here as u16, i)
+            }
             ColorMode::ByType => node.category().color(),
-            ColorMode::ByAge => node_color(tree, id, color, now, 0, 0, i),
+            ColorMode::ByAge => node_color(tree, id, color, now, branch_root, 0, i),
         });
         if node.is_dir() {
             // Reserve a header strip when the rect can afford one.

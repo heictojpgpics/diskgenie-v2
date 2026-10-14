@@ -59,7 +59,7 @@ export function ApplicationsView() {
         <EmptyState
           icon={<AppWindowIcon size={28} />}
           title="Applications"
-          body={status === "scanning" ? "Scan in progress — app footprints land here after the tree is ready." : "Every installed app, its leftovers, and one-click cleanup."}
+          body={status === "scanning" ? "Scan in progress. App footprints land here after the tree is ready." : "Every installed app, its leftovers, one-click cleanup."}
           action={
             status !== "scanning" ? (
               <button type="button" className="db-ink-button auto" onClick={() => void startScan("ThisPC")}>
@@ -95,7 +95,7 @@ export function ApplicationsView() {
 
   const stageLeftovers = (app: AppEntry) => {
     const items = app.leftovers.flatMap((g) =>
-      g.paths.map((p) => ({ id: 0, path: p.path, size: p.size, reason: `Leftovers: ${app.name} — ${g.label}` })),
+      g.paths.map((p) => ({ id: 0, path: p.path, size: p.size, reason: `Leftovers: ${app.name} · ${g.label}` })),
     );
     if (items.length > 0) stageMany(items);
     setConfirm(null);
@@ -235,7 +235,7 @@ export function ApplicationsView() {
       })}
 
       {!busy && sorted.length === 0 && (
-        <EmptyState icon={<PackageOpenIcon size={28} />} title="No applications found" body="Registry and Store enumeration found nothing — try Refresh." />
+        <EmptyState icon={<PackageOpenIcon size={28} />} title="No applications found" body="Registry and Store enumeration found nothing. Try Refresh." />
       )}
 
       {confirm && (

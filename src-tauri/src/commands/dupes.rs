@@ -565,8 +565,20 @@ fn compute_dupes(tree: &Tree, ctl: &DupesCtl, start: u32) -> Result<DupesResult,
     );
 
     // The v3 engine: screens + lockstep verification (core-side).
-    let verified = engine::run(&candidates, &engine::EngineConfig::default(), ctl)
-        .map_err(|e| e.to_string())?;
+    // The hardlink closure lets the engine capture (volume_serial,
+    // file_index) from each verified member's ALREADY-OPEN File
+    // handle — collapsing the THIRD `File::open` per verified member
+    // that the v2 caller used to do (10k verified files × 20 ms
+    // Defender scan = 200 s saved AFTER the verify pass finishes).
+    let hardlink_resolver =
+        |f: &std::fs::File| crate::platform::os::hardlink_identity_for_handle(f);
+    let verified = engine::run(
+        &candidates,
+        &engine::EngineConfig::default(),
+        ctl,
+        &hardlink_resolver,
+    )
+    .map_err(|e| e.to_string())?;
     eprintln!(
         "[dupes] engine finished: {} verified groups at {:?}",
         verified.len(),
@@ -575,14 +587,20 @@ fn compute_dupes(tree: &Tree, ctl: &DupesCtl, start: u32) -> Result<DupesResult,
 
     // Hardlink identity per verified member + the tree facts the UI's
     // keep rules and reveal wiring need (node id + modified). The
-    // platform seam needs an open handle; verified members are the
-    // true-duplicate subset, so this opens a small fraction of the
-    // tree.
+    // engine already captured (volume_serial, file_index) from the
+    // open verify handle; only the TINY files (size ≤ prefix_len)
+    // didn't go through verify and still need the legacy open.
     let mut hashed: Vec<HashedFile> = Vec::new();
     for (class, group) in verified.iter().enumerate() {
         for f in &group.files {
-            let (vs, fi) = hardlink_identity(std::path::Path::new(&f.path))
-                .unwrap_or((u64::MAX, u64::from(f.node_id)));
+            // Verified files have (vs, fi) captured; tiny files
+            // (vs == 0) fall back to the legacy open here.
+            let (vs, fi) = if f.volume_serial == 0 {
+                hardlink_identity(std::path::Path::new(&f.path))
+                    .unwrap_or((u64::MAX, u64::from(f.node_id)))
+            } else {
+                (f.volume_serial, f.file_index)
+            };
             let modified = tree.node(f.node_id).map_or(0, |n| n.modified);
             hashed.push(HashedFile {
                 path: f.path.clone(),
@@ -773,10 +791,8 @@ mod tests {
 
         /// Unique scratch dir under %TEMP% (no tempfile dep).
         fn scratch(name: &str) -> PathBuf {
-            let d = std::env::temp_dir().join(format!(
-                "db-dupes-e2e-{}-{name}",
-                std::process::id()
-            ));
+            let d =
+                std::env::temp_dir().join(format!("db-dupes-e2e-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&d); // R7.1-allow: test-scratch
             fs::create_dir_all(&d).expect("scratch dir");
             d
@@ -915,9 +931,17 @@ mod tests {
         /// genuine file to the OS cache + Defender) — shared by the
         /// performance corpus below.
         const FORMATS: [(&str, &[u8]); 8] = [
-            ("jpg", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F']),
+            (
+                "jpg",
+                &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'],
+            ),
             ("png", &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
-            ("mp4", &[0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm']),
+            (
+                "mp4",
+                &[
+                    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm',
+                ],
+            ),
             ("zip", &[b'P', b'K', 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
             ("pdf", b"%PDF-1.7"),
             ("iso", &[0x01, b'C', b'D', 0x00, 0x01]),
@@ -983,8 +1007,7 @@ mod tests {
                     // Duplicate of the PREVIOUS file (same content,
                     // same size) → an exact group of 2. The pair's
                     // size is the PREVIOUS index's (the copied file).
-                    let prev =
-                        format!("shot_{:03}.{}", i - 1, FORMATS[((i - 1) % 8) as usize].0);
+                    let prev = format!("shot_{:03}.{}", i - 1, FORMATS[((i - 1) % 8) as usize].0);
                     let pair_size = (64 + (i - 1) % 129) * kib;
                     fs::copy(
                         small_dir.join(&prev),
@@ -1192,7 +1215,10 @@ mod tests {
                 assert!(hit.is_some(), "missing group size={size} count={count}");
                 for n in names {
                     assert!(
-                        hit.unwrap().files.iter().any(|f| f.path.contains(n.as_str())),
+                        hit.unwrap()
+                            .files
+                            .iter()
+                            .any(|f| f.path.contains(n.as_str())),
                         "group member {n} missing: {:?}",
                         hit.unwrap().files
                     );

@@ -331,6 +331,16 @@ pub fn hardlink_identity(path: &std::path::Path) -> Option<(u64, u64)> {
     Some((md.dev(), md.ino()))
 }
 
+/// Same as [`hardlink_identity`] but accepts an ALREADY-OPEN handle
+/// (the dupes engine's verify pass has one positioned past the
+/// screens — reusing it saves the THIRD `File::open` per verified
+/// member that the v2 caller used to do).
+pub fn hardlink_identity_for_handle(file: &std::fs::File) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let md = file.metadata().ok()?;
+    Some((md.dev(), md.ino()))
+}
+
 /// macOS product version for the license device facts (audit field;
 /// `kern.osproductversion` via the sysctl seam — same call shape as
 /// [`cpuid_brand`]).
