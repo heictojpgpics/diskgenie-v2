@@ -80,9 +80,12 @@ pub fn build_tree(mut entries: Vec<CompactEntry>, root_label: &str) -> TurboBuil
 
     // Pass 2: link children by parent (hardlink policy: charge to the
     // lexicographically-first parent). Win32-namespace names only for
-    // linking; DOS names are display fallbacks.
+    // linking; DOS names are display fallbacks. CSR layout (counts →
+    // offsets → flat child array): the old Vec-per-record table spent
+    // one allocation per MFT record (1-3M on a real volume) purely on
+    // mostly-empty child lists.
     let record_count = entries.len();
-    let mut children: Vec<Vec<u32>> = vec![Vec::new(); record_count];
+    let mut child_count: Vec<u32> = vec![0; record_count];
     for e in &entries {
         if !e.in_use || e.base_record != 0 {
             continue; // Deleted or folded extension.
@@ -98,9 +101,35 @@ pub fn build_tree(mut entries: Vec<CompactEntry>, root_label: &str) -> TurboBuil
         // Self-links (the root record's parent is itself in NTFS) never
         // become child links.
         if parent != e.mft_record as usize {
-            children[parent].push(e.mft_record);
+            child_count[parent] += 1;
         }
     }
+    let mut offsets: Vec<u32> = Vec::with_capacity(record_count + 1);
+    let mut running: u32 = 0;
+    offsets.push(0);
+    for &c in &child_count {
+        running += c;
+        offsets.push(running);
+    }
+    let mut flat_children: Vec<u32> = vec![0; running as usize];
+    let mut write_at: Vec<u32> = offsets.clone(); // per-parent cursor
+    for e in &entries {
+        if !e.in_use || e.base_record != 0 {
+            continue;
+        }
+        let Some(name_rec) = pick_link_name(e) else {
+            continue;
+        };
+        let parent = name_rec.parent as usize;
+        if parent >= record_count || parent == e.mft_record as usize {
+            continue;
+        }
+        flat_children[write_at[parent] as usize] = e.mft_record;
+        write_at[parent] += 1;
+    }
+    let children_of = |rec: u32| -> &[u32] {
+        &flat_children[offsets[rec as usize] as usize..offsets[rec as usize + 1] as usize]
+    };
 
     // Hardlink charge-once: a record with multiple parents appears in
     // several children lists — keep ONLY the first parent link (sort by
@@ -123,7 +152,7 @@ pub fn build_tree(mut entries: Vec<CompactEntry>, root_label: &str) -> TurboBuil
         let id = bfs_order.len() as u32;
         arena_id_of[rec as usize] = id;
         bfs_order.push(rec);
-        for &child in &children[rec as usize] {
+        for &child in children_of(rec) {
             if arena_id_of[child as usize] == u32::MAX {
                 queue.push_back(child);
             }
@@ -139,44 +168,84 @@ pub fn build_tree(mut entries: Vec<CompactEntry>, root_label: &str) -> TurboBuil
     }
     warnings.unreferenced += unreferenced_records.len() as u64;
 
-    // Pass 4: emit arena batches (parent-first by construction; append
-    // per-parent batches so children stay contiguous).
+    // Pass 4 (see `emit_bfs_batches`).
     let mut tree = Tree::new(0); // generation filled by the caller
     tree.add_root_path(0, root_label);
-    for &rec in &bfs_order {
+    emit_bfs_batches(&mut tree, &entries, &bfs_order, &arena_id_of);
+    // Unreferenced bucket under the root (honest accounting).
+    append_unreferenced_bucket(&mut tree, &entries, &unreferenced_records);
+
+    TurboBuild { tree, warnings }
+}
+
+/// Pass 4: emit arena batches in BFS order (parent-first by
+/// construction). BFS enqueues each parent's children as one
+/// contiguous block, so consecutive records sharing a parent merge
+/// into ONE `append_batch` — the old per-record emission spent one
+/// Vec allocation + one tree lock per MFT record (1-3M on a real
+/// volume).
+fn emit_bfs_batches(
+    tree: &mut Tree,
+    entries: &[CompactEntry],
+    bfs_order: &[u32],
+    arena_id_of: &[u32],
+) {
+    let mut idx = 0usize;
+    while idx < bfs_order.len() {
+        let rec = bfs_order[idx];
         if rec == ROOT_RECORD {
+            idx += 1;
             continue; // The root record IS arena id 0 (add_root_path).
         }
         let e = &entries[rec as usize];
         let parent_rec = pick_link_name(e).map_or(ROOT_RECORD, |n| n.parent as u32);
         let parent_id = arena_id_of[parent_rec as usize];
         if parent_id == u32::MAX {
+            idx += 1;
             continue; // Cycle cut above; skip.
         }
-        let mut node = if e.is_dir {
-            Node::new_dir()
-        } else {
-            Node::new_file()
-        };
-        node.logical = e.real;
-        node.on_disk = e.allocated;
-        // FILETIME → unix seconds: t/10^7 − 11_644_473_600.
-        node.modified = filetime_to_unix(e.modified);
-        node.created = filetime_to_unix(e.created);
-        if e.is_reparse {
-            node.set_protected(true); // Reparse points: never descend/stage.
+        // Extend the batch across consecutive records with the SAME
+        // parent (the BFS block).
+        let mut batch: Vec<BatchEntry> = Vec::new();
+        while idx < bfs_order.len() {
+            let r = bfs_order[idx];
+            if r == ROOT_RECORD {
+                break;
+            }
+            let er = &entries[r as usize];
+            let pr = pick_link_name(er).map_or(ROOT_RECORD, |n| n.parent as u32);
+            if pr != parent_rec || arena_id_of[pr as usize] != parent_id {
+                break;
+            }
+            batch.push(node_entry_of(er));
+            idx += 1;
         }
-        if !e.is_dir {
-            let name: Vec<u16> = canonical_name(e).map_or(Vec::new(), |n| n.name.clone());
-            node.set_category(FileCategory::from_name(&name));
+        if !batch.is_empty() {
+            tree.append_batch(parent_id, batch);
         }
-        let name: Vec<u16> = canonical_name(e).map_or(Vec::new(), |n| n.name.clone());
-        tree.append_batch(parent_id, vec![BatchEntry { name, node }]);
     }
-    // Unreferenced bucket under the root (honest accounting).
-    append_unreferenced_bucket(&mut tree, &entries, &unreferenced_records);
+}
 
-    TurboBuild { tree, warnings }
+/// One record → (name, node) arena entry: sizes, FILETIME→unix
+/// conversion, reparse protection, category resolution.
+fn node_entry_of(e: &CompactEntry) -> BatchEntry {
+    let mut node = if e.is_dir {
+        Node::new_dir()
+    } else {
+        Node::new_file()
+    };
+    node.logical = e.real;
+    node.on_disk = e.allocated;
+    node.modified = filetime_to_unix(e.modified);
+    node.created = filetime_to_unix(e.created);
+    if e.is_reparse {
+        node.set_protected(true); // Reparse points: never descend/stage.
+    }
+    let name: Vec<u16> = canonical_name(e).map_or(Vec::new(), |n| n.name.clone());
+    if !e.is_dir {
+        node.set_category(FileCategory::from_name(&name));
+    }
+    BatchEntry { name, node }
 }
 
 /// One synthetic "(unreferenced)" folder holding every live-but-
