@@ -1327,8 +1327,13 @@ mod tests {
             2,
             "hardlink closure called once per verified member"
         );
-        // The captured (vs, fi) fields are populated (non-zero on
-        // real filesystems; the closure returned real metadata).
+        // On Unix the closure returns real (dev, ino) — both non-zero.
+        // On Windows/non-Unix the closure returns None (the unstable
+        // MetadataExt API can't be used on stable), and the engine's
+        // fallback fills (0, m.idx as u64). The first member's
+        // file_index is 0 (m.idx == 0), so we only assert non-zero
+        // on Unix where the closure actually returned real metadata.
+        #[cfg(unix)]
         for f in &groups[0].files {
             assert!(
                 f.volume_serial != 0 || f.file_index != 0,
