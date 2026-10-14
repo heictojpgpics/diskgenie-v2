@@ -378,6 +378,13 @@ struct LiveMember {
     chain: Xxh3,
     /// `true` once the member's verify range is exhausted.
     eof: bool,
+    /// `true` when a read FAILED (as opposed to a clean early EOF):
+    /// the unread remainder is UNKNOWN, so this member can never join
+    /// a verified group — two members failing at the same offset with
+    /// equal chains would otherwise be emitted as duplicates whose
+    /// tails were never read (the mid-verify I/O-error false
+    /// positive).
+    tainted: bool,
     /// Verify bytes actually read (progress accounting).
     read: u64,
 }
@@ -453,6 +460,7 @@ fn verify_bucket(
             file,
             chain: seeded_chain(bucket.screens.0, bucket.screens.1),
             eof: false,
+            tainted: false,
             read: 0,
         });
     }
@@ -482,10 +490,20 @@ fn verify_bucket(
                     continue;
                 }
                 let want = (remaining as usize).min(cfg.verify_block);
-                // An I/O error mid-verify treats as early EOF: the
-                // member's chain simply stops growing, which splits
-                // it from continuing members at the next partition.
-                let got = read_fill(&mut member.file, &mut buf[..want], want).unwrap_or(0);
+                // A clean short read is a legitimate early EOF (the file
+                // ended before the predicted range — stale size; the
+                // member's chain simply stops growing and splits from
+                // continuing members at the next partition). A read
+                // ERROR is different: the unread remainder is unknown,
+                // so the member is TAINTED and can never join a
+                // verified group (the false-positive gap: two members
+                // failing at the same offset with equal chains were
+                // previously emitted as verified duplicates).
+                let Ok(got) = read_fill(&mut member.file, &mut buf[..want], want) else {
+                    member.eof = true;
+                    member.tainted = true;
+                    continue;
+                };
                 member.read += got as u64;
                 if got > 0 {
                     member.chain.update(&buf[..got]);
@@ -513,9 +531,19 @@ fn verify_bucket(
 
         let mut next_live: Vec<LiveMember> = Vec::new();
         for mut class in ordered {
-            if class.len() >= 2 && class.iter().all(|m| m.eof) {
-                // Verified: equal chains through the whole range.
+            if class.len() >= 2 && class.iter().all(|m| m.eof) && class.iter().all(|m| !m.tainted) {
+                // Verified: equal chains through the whole range, every
+                // byte actually read.
                 groups.push(class.iter().map(|m| m.idx).collect());
+                for m in &class {
+                    sink.file_done(m.read);
+                }
+            } else if class.len() >= 2 && class.iter().all(|m| m.eof) {
+                // All done but at least one member is TAINTED (a read
+                // failed mid-range): the equality claim is unprovable.
+                // Retire every member as a singleton — an honest
+                // "unverifiable" skip, never a false positive. (Riding
+                // along is pointless: no further reads can happen.)
                 for m in &class {
                     sink.file_done(m.read);
                 }
@@ -523,11 +551,13 @@ fn verify_bucket(
                 // Still tied with unfinished readers — keep
                 // streaming (EOF members ride along until the
                 // class splits or the rest finish; their frozen
-                // digests diverge from any further reads).
+                // digests diverge from any further reads — a tainted
+                // rider splits the same way, and if the readers stay
+                // tied to it they land in the all-eof branch above).
                 next_live.append(&mut class);
             } else {
                 // Singleton — retired (unique, or orphaned by a
-                // mid-scan change).
+                // mid-scan change, or tainted).
                 let m = class.pop().expect("nonempty class");
                 sink.file_done(m.read);
             }

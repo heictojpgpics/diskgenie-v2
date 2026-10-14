@@ -150,7 +150,7 @@ struct Shared<P: Platform> {
     /// Resolved spec §4 apps roots (compared when directories are
     /// enqueued, case-insensitively).
     apps_roots: Vec<String>,
-    /// Worker population (bounds per-push wakeups in process_job).
+    /// Worker population (bounds per-push wakeups in `process_job`).
     worker_count: usize,
 }
 
@@ -888,7 +888,11 @@ mod tests {
             (Box::leak(name.into_boxed_str()), 0, 0)
         }
         fn file_row(name: &str, logical: u64, on_disk: u64) -> (&'static str, u64, u64) {
-            (Box::leak(name.to_string().into_boxed_str()), logical, on_disk)
+            (
+                Box::leak(name.to_string().into_boxed_str()),
+                logical,
+                on_disk,
+            )
         }
         for shape in 0..6 {
             let mut fs = TestFs::new();
