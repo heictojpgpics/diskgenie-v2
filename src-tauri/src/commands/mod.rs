@@ -32,10 +32,7 @@ use crate::state::AppState;
 /// "stale generation N (current M)"). The hand-inlined copies across
 /// the command modules had already drifted in comment and structure;
 /// every new command goes through these instead.
-pub(crate) fn resolve_tree(
-    state: &AppState,
-    generation: u64,
-) -> Result<TreeArc<Tree>, String> {
+pub(crate) fn resolve_tree(state: &AppState, generation: u64) -> Result<TreeArc<Tree>, String> {
     let guard = state.tree.read();
     let Some(tree) = guard.as_ref() else {
         return Err("no scan yet".into());
