@@ -75,6 +75,14 @@ selection and review before cleanup, platform-aware behavior, and generated
 realistic corpora. Their code has not been copied. Any future adoption must be
 an independently measured DiskGenie change with compatible licensing.
 
+## Commit / remote status
+
+- Commit: `0a0afa7 fix(age-map): align monthly heatmap contract`.
+- Push to the configured `upstream` remote was attempted and stopped because
+  this environment has no configured GitHub credential (`could not read
+  Username`). No token was written to the repository, Git configuration, or
+  command history.
+
 ## Risks and rollback
 
 - Filesystem cleanup and duplicate selection are destructive-adjacent. Changes
