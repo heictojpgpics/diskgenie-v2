@@ -147,12 +147,14 @@ impl<K: Eq + std::hash::Hash + Clone, V> LruCache<K, V> {
 
     /// Current entry count (tests + telemetry).
     #[must_use]
+    #[allow(dead_code)] // kept for tests + telemetry; not all callers use both
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Empty (tests).
     #[must_use]
+    #[allow(dead_code)] // kept for tests; production callers use len() instead
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
