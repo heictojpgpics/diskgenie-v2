@@ -47,6 +47,10 @@ export function AgeMapMode(props: AgeMapModeProps) {
     // bucketing spinner spun for eternity under a rescan. FoldersMode
     // already had the honest pattern: say the scan changed and wait.
     setStale(false);
+    // A changed generation/folder must never leave a previous heatmap on
+    // screen while the next request is in flight.  Apart from being visually
+    // misleading, that hid real-data fetch failures behind mock-looking data.
+    setData(null);
     void (async () => {
       try {
         const d = await getAgeMap(props.generation, props.folder);

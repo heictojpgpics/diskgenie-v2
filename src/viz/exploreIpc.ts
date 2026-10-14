@@ -117,6 +117,7 @@ export interface MonthHeatmapData {
   /** bytes[(year - firstYear) * 12 + month] */
   bytes: number[];
   max: number;
+  /** `[year, zero-based month]`, matching the `bytes` column index. */
   busiest: [number, number] | null;
 }
 

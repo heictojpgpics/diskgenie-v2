@@ -892,10 +892,12 @@ export const commands: Record<string, Cmd> = {
       const n = tree.nodes[d];
       if (n.isDir) continue;
       const b = ageBucketOf(n.modified, now);
-      buckets[b] += n.logical;
+      // Mirror the real engine: age analysis is allocated-byte based, so
+      // sparse/compressed files have the same proportions in mock and Tauri.
+      buckets[b] += n.onDisk;
       const dt = new Date(n.modified * 1000);
       const key = `${dt.getUTCFullYear()}-${dt.getUTCMonth()}`;
-      monthMap.set(key, (monthMap.get(key) ?? 0) + n.logical);
+      monthMap.set(key, (monthMap.get(key) ?? 0) + n.onDisk);
       if (n.logical >= 40 * MB && now - n.modified > 365 * DAY && !n.cloud) {
         big.push({ id: d, name: n.name, path: fmtPath(d), logical: n.logical, onDisk: n.onDisk, modified: n.modified, protected: n.protected });
       }

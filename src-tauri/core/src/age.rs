@@ -76,7 +76,9 @@ pub struct MonthHeatmap {
     pub bytes: Vec<u64>,
     /// Max cell value (legend "more" end).
     pub max: u64,
-    /// `(year, month)` of the busiest month.
+    /// `(year, zero-based month)` of the busiest month.  This is an IPC-facing
+    /// value: month indexes must agree with `bytes` and JavaScript's
+    /// `Date#getUTCMonth` (January = 0), not civil-date month numbers.
     pub busiest: Option<(i32, usize)>,
 }
 
@@ -145,7 +147,10 @@ pub fn month_heatmap(tree: &Tree, id: u32) -> MonthHeatmap {
         bytes[idx] = v;
         if v > max {
             max = v;
-            busiest = Some((y, m));
+            // `year_month` deliberately returns a civil month (1..=12), but
+            // `bytes` and the UI address columns with a zero-based index.
+            // Keep the entire heatmap DTO on that one convention.
+            busiest = Some((y, m - 1));
         }
     }
     MonthHeatmap {
@@ -291,7 +296,7 @@ mod tests {
         assert_eq!(h.bytes.len(), 12);
         assert_eq!(h.bytes[8], 10); // September = index 8
         assert_eq!(h.max, 10);
-        assert_eq!(h.busiest, Some((2026, 9)));
+        assert_eq!(h.busiest, Some((2026, 8))); // September, zero-based
     }
 
     #[test]
@@ -322,7 +327,7 @@ mod tests {
         assert_eq!(h.bytes[idx_2024_09], 7);
         assert_eq!(h.bytes[idx_2026_09], 150); // 100 + 50 accumulated
         assert_eq!(h.max, 150);
-        assert_eq!(h.busiest, Some((2026, 9)));
+        assert_eq!(h.busiest, Some((2026, 8))); // September, zero-based
     }
 
     #[test]
