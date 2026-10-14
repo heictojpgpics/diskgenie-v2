@@ -117,24 +117,29 @@ pub fn bubbles(
     })
 }
 
-/// Collect the bubble hierarchy down to `depth_left` levels (no geometry).
+/// Collect the bubble hierarchy down to `depth_left` levels (no
+/// geometry). Graceful skips (not expects): release builds
+/// panic=abort, so a corrupted CSR must drop the subtree instead of
+/// killing the app — the same hardening `names_batch` received.
 fn build_bubble(tree: &Tree, id: u32, depth_left: u32) -> Bubble {
-    let n = tree.node(id).expect("node id");
     let mut children = Vec::new();
-    if depth_left > 0 && n.is_dir() && n.child_count > 0 {
+    let n = tree.node(id);
+    let (size, is_dir, child_count) = match n {
+        Some(n) => (n.on_disk, n.is_dir(), n.child_count),
+        None => (0, false, 0),
+    };
+    if depth_left > 0 && is_dir && child_count > 0 {
         for &cid in tree.children_sorted(id) {
-            let c = tree.node(cid).expect("child id");
+            let Some(c) = tree.node(cid) else {
+                continue;
+            };
             if c.on_disk == 0 || c.is_removed() {
                 continue;
             }
             children.push(build_bubble(tree, cid, depth_left - 1));
         }
     }
-    Bubble {
-        id,
-        size: n.on_disk,
-        children,
-    }
+    Bubble { id, size, children }
 }
 
 /// One allocated child during emission: `(child index, x, y, r)` with

@@ -152,7 +152,11 @@ fn layout_ring(
         if crate::layout::over_budget(cells, truncated) {
             return;
         }
-        let c = tree.node(id).expect("child id");
+        // Graceful skip (not expect): release builds panic=abort; a
+        // corrupted CSR drops the cell instead of killing the app.
+        let Some(c) = tree.node(id) else {
+            continue;
+        };
         if c.is_removed() || c.on_disk == 0 {
             continue;
         }

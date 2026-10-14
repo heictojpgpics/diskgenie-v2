@@ -187,7 +187,11 @@ fn layout_row(
         if crate::layout::over_budget(cells, truncated) {
             return;
         }
-        let c = tree.node(id).expect("kept child id");
+        // Graceful skip (not expect): release builds panic=abort; a
+        // corrupted CSR drops the cell instead of killing the app.
+        let Some(c) = tree.node(id) else {
+            continue;
+        };
         let w = w_raw * scale;
         if w < MIN_W {
             continue; // Rounding edge after rescale.

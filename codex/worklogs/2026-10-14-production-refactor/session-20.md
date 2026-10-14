@@ -112,3 +112,7 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 - `resolve_tree` / `resolve_node` extracted to `commands/mod.rs` (the shared wire-string contract: "no scan yet" / "stale generation N (current M)" / "node N not in tree"). Converted the same-shape sites: top_sizes, age_map (via the explore alias), dupes find_duplicates (tree-only form), sidebar quick_wins. The hold-the-guard sites (quick_win_items, shell, snapshots, layout's compute-under-lock) deliberately NOT converted — changing their lock scope is a behavior change, out of refactor bounds. ~40 lines of drift-prone duplication removed; every future command gets the guard for free.
 - Mirror parity: the guard helpers re-exported in the mirror's commands.rs (with a documented unused-import allow for the explore-only form).
 - Gates: mirror 46 + clippy clean; core 222; tsc 0; vitest 132.
+
+## Milestone 7 (panic-safety hardening)
+
+- Release builds use `panic = "abort"`: one corrupted-CSR `expect()` in a layout engine would kill the whole app mid-render. All six production-path expects converted to graceful skips (treemap, sunburst, flame, mindmap per-child; bubbles' build_bubble collects defensively) — the same hardening `names_batch` already received (CI run 35707319531 in its comment). A missing node drops its cell/subtree instead of aborting; every engine's unit suites still green.
