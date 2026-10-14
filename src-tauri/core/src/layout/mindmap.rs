@@ -467,9 +467,15 @@ fn layout_branches(
         // Family color is now name-based, resolved inside `node_color` from
         // `branch_root` + `id`; the legacy `fam` index is no longer used
         // for coloring (kept for inheritance threading).
-        let fam = if node == branch_root || depth_here == 1 { i } else { top_index };
+        let fam = if node == branch_root || depth_here == 1 {
+            i
+        } else {
+            top_index
+        };
         let rgb = match color {
-            ColorMode::ByFolder => node_color(tree, id, color, now, branch_root, depth_here as u16, i),
+            ColorMode::ByFolder => {
+                node_color(tree, id, color, now, branch_root, depth_here as u16, i)
+            }
             ColorMode::ByType => c.category().color(),
             ColorMode::ByAge => node_color(tree, id, color, now, branch_root, 0, i),
         };

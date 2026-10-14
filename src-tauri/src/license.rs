@@ -1023,10 +1023,15 @@ mod tests {
             sign_fixture(&v, TEST_SEED_HEX)
         };
         // No kid/aud (legacy fleet): valid.
-        assert!(
-            verify_token(&base(serde_json::json!({})), &pub_hex, &key_hash, &hw, "windows", now)
-                .is_ok()
-        );
+        assert!(verify_token(
+            &base(serde_json::json!({})),
+            &pub_hex,
+            &key_hash,
+            &hw,
+            "windows",
+            now
+        )
+        .is_ok());
         // Present + correct: valid.
         assert!(verify_token(
             &base(serde_json::json!({"kid": 1, "aud": "diskgenie"})),

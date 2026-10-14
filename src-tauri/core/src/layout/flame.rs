@@ -199,7 +199,9 @@ fn layout_row(
         // needed for coloring (kept for inheritance threading).
         let fam = crate::layout::family_of(node, branch_root, slot, top_index);
         let rgba = pack_rgba(match color {
-            ColorMode::ByFolder => node_color(tree, id, color, now, branch_root, depth_here as u16, slot),
+            ColorMode::ByFolder => {
+                node_color(tree, id, color, now, branch_root, depth_here as u16, slot)
+            }
             ColorMode::ByType => c.category().color(),
             ColorMode::ByAge => node_color(tree, id, color, now, branch_root, 0, slot),
         });

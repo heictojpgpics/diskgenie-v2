@@ -383,13 +383,7 @@ mod tests {
             json.contains("\"lastYear\""),
             "expected camelCase lastYear, got: {json}"
         );
-        assert!(
-            !json.contains("first_year"),
-            "snake_case leaked: {json}"
-        );
-        assert!(
-            !json.contains("last_year"),
-            "snake_case leaked: {json}"
-        );
+        assert!(!json.contains("first_year"), "snake_case leaked: {json}");
+        assert!(!json.contains("last_year"), "snake_case leaked: {json}");
     }
 }

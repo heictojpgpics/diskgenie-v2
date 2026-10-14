@@ -152,7 +152,9 @@ fn layout_children(
         // a future color mode can use it without re-plumbing.
         let fam = crate::layout::family_of(parent, branch_root, i, family);
         let rgba = pack_rgba(match color {
-            ColorMode::ByFolder => node_color(tree, id, color, now, branch_root, depth_here as u16, i),
+            ColorMode::ByFolder => {
+                node_color(tree, id, color, now, branch_root, depth_here as u16, i)
+            }
             ColorMode::ByType => node.category().color(),
             ColorMode::ByAge => node_color(tree, id, color, now, branch_root, 0, i),
         });

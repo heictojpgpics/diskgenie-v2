@@ -1119,17 +1119,23 @@ mod tests {
     fn empty_and_singleton_inputs_return_no_groups() {
         let (_t, d) = stage("empty");
         assert!(
-            run(&[], &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
+            run(&[], &small_cfg(), &QuietSink, no_hardlink())
+                .unwrap()
+                .is_empty(),
             "empty in, empty out"
         );
         let mut cands = candidates_of(&d);
         assert!(
-            run(&cands, &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
+            run(&cands, &small_cfg(), &QuietSink, no_hardlink())
+                .unwrap()
+                .is_empty(),
             "no same-size pair"
         );
         cands.clear();
         assert!(
-            run(&cands, &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
+            run(&cands, &small_cfg(), &QuietSink, no_hardlink())
+                .unwrap()
+                .is_empty(),
             "no same-size pair"
         );
     }
