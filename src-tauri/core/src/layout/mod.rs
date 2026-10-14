@@ -874,7 +874,10 @@ mod tests {
         // Windows → slate (index 5).
         let win = folder_family_color_by_name("Windows", 0, 0);
         let svi = folder_family_color_by_name("System Volume Information", 0, 0);
-        assert_eq!(win, svi, "System Volume Information maps to slate like Windows");
+        assert_eq!(
+            win, svi,
+            "System Volume Information maps to slate like Windows"
+        );
 
         // Downloads → amber (index 6).
         let dl = folder_family_color_by_name("Downloads", 0, 0);
@@ -999,9 +1002,21 @@ mod tests {
         assert_eq!(top_level_branch_id(&t, 5, 1), 2, "walks up to Users");
         assert_eq!(top_level_branch_id(&t, 4, 1), 2, "Documents → Users");
         assert_eq!(top_level_branch_id(&t, 3, 1), 2, "admin → Users");
-        assert_eq!(top_level_branch_id(&t, 2, 1), 2, "Users is itself the branch");
-        assert_eq!(top_level_branch_id(&t, 1, 1), 1, "C: == branch_root → itself");
-        assert_eq!(top_level_branch_id(&t, 0, 0), 0, "root with branch_root=0 → itself");
+        assert_eq!(
+            top_level_branch_id(&t, 2, 1),
+            2,
+            "Users is itself the branch"
+        );
+        assert_eq!(
+            top_level_branch_id(&t, 1, 1),
+            1,
+            "C: == branch_root → itself"
+        );
+        assert_eq!(
+            top_level_branch_id(&t, 0, 0),
+            0,
+            "root with branch_root=0 → itself"
+        );
     }
 
     #[test]
@@ -1037,10 +1052,10 @@ mod tests {
 
         let now = 1_800_000_000;
         let branch_root = 1; // C:
-        // The resume.pdf file's family is "Users" (its top-level
-        // branch). node_color should resolve it via name and return
-        // the BLUE family color — the SAME color as a direct call
-        // to folder_family_color_by_name("Users", ...).
+                             // The resume.pdf file's family is "Users" (its top-level
+                             // branch). node_color should resolve it via name and return
+                             // the BLUE family color — the SAME color as a direct call
+                             // to folder_family_color_by_name("Users", ...).
         let color_deep = node_color(&t, 4, ColorMode::ByFolder, now, branch_root, 3, 0);
         let color_users_direct = folder_family_color_by_name("Users", 3, 0);
         assert_eq!(

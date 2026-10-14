@@ -227,11 +227,11 @@ fn emit(
         };
         let mut lo = 0.0f32; // feasible (degenerate point)
         let mut hi = 1.0f32; // infeasible (extent(1.0) = needed > usable)
-        // Front-chain packing can produce extent(1.0) <= usable (the
-        // pack is denser than concentric rings). If so, the bisection
-        // would never explore above 1.0 — so first probe upward to
-        // find a true infeasible hi (extent > usable), bounded at 4×
-        // so we don't loop forever on degenerate inputs.
+                             // Front-chain packing can produce extent(1.0) <= usable (the
+                             // pack is denser than concentric rings). If so, the bisection
+                             // would never explore above 1.0 — so first probe upward to
+                             // find a true infeasible hi (extent > usable), bounded at 4×
+                             // so we don't loop forever on degenerate inputs.
         if pack_at(&mut kids, hi) <= usable {
             let mut step = 1.0f32;
             while hi < 4.0 {
@@ -346,9 +346,9 @@ fn ring_pack(kids: &mut [Placed]) {
             for k in (j + 1)..i {
                 let rj = kids[j].3;
                 let rk = kids[k].3;
-                if let Some((x, y)) = tangent_position(
-                    kids[j].1, kids[j].2, rj, kids[k].1, kids[k].2, rk, ri,
-                ) {
+                if let Some((x, y)) =
+                    tangent_position(kids[j].1, kids[j].2, rj, kids[k].1, kids[k].2, rk, ri)
+                {
                     let dist_sq = x * x + y * y;
                     if dist_sq >= best_dist_sq {
                         continue;
@@ -416,7 +416,7 @@ fn tangent_position(
     let d = d_sq.sqrt();
     let dij = rj + ri + GAP; // distance from j's center to the new center
     let dik = rk + ri + GAP; // distance from k's center to the new center
-    // Triangle inequality: |dij - dik| <= d <= dij + dik
+                             // Triangle inequality: |dij - dik| <= d <= dij + dik
     if d > dij + dik || d < (dij - dik).abs() {
         return None;
     }
