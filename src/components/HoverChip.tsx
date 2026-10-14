@@ -115,9 +115,9 @@ export const HoverChip = forwardRef<HoverChipHandle, { sizeFmt: (b: number) => s
       <span className="db-hc-icon" />
       <span className="db-hc-body">
         <strong>Name</strong>
-        <small>—</small>
+        <small>n/a</small>
       </span>
-      <span className="db-hc-pill">—</span>
+      <span className="db-hc-pill">n/a</span>
     </div>
   );
 });

@@ -85,7 +85,7 @@ pub fn registry_uninstall_entries() -> Vec<RawRegistryApp> {
                 id: stable_id,
                 name: display.unwrap_or(display_name),
                 publisher,
-                version: version.unwrap_or_else(|| "—".into()),
+                version: version.unwrap_or_else(|| "Unknown".into()),
                 install_location: path.to_string_lossy().into_owned(),
                 uninstall_string: String::new(),
                 quiet_uninstall_string: String::new(),

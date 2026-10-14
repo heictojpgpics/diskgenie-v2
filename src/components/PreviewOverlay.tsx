@@ -129,7 +129,7 @@ export function PreviewOverlay({
           {kind === "cloud" && (
             <div className="db-preview-other">
               <CloudIcon size={38} />
-              <p>Stored in the cloud — not downloaded.</p>
+              <p>Stored in the cloud, not downloaded.</p>
               <p style={{ fontSize: 11, marginTop: -4 }}>Previews are disabled so nothing gets downloaded.</p>
             </div>
           )}

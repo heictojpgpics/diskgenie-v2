@@ -120,7 +120,7 @@ export function SnapshotsView() {
         <EmptyState
           icon={<Clock3Icon size={28} />}
           title="Snapshots"
-          body={status === "scanning" ? "Scan in progress — snapshots capture the tree when it’s done." : "Before/after diffs of any two scans of the same root."}
+          body={status === "scanning" ? "Scan in progress. Snapshots capture the tree once it’s done." : "Before/after diffs of any two scans of the same root."}
           action={
             status !== "scanning" ? (
               <button type="button" className="db-ink-button auto" onClick={() => void startScan("ThisPC")}>
@@ -170,7 +170,7 @@ export function SnapshotsView() {
         <EmptyState
           icon={<CameraIcon size={28} />}
           title="No snapshots yet"
-          body="Take a snapshot now, run your cleanup, then take another — the diff shows exactly what changed."
+          body="Take a snapshot now, run your cleanup, then take another. The diff shows exactly what changed."
           action={
             <button
               type="button"
@@ -242,7 +242,7 @@ export function SnapshotsView() {
           {diff && !diff.sameRoot && (
             <div className="db-pop-failed" style={{ margin: "0 0 10px" }}>
               <strong>Different roots</strong>
-              <p style={{ margin: 0, fontSize: 11 }}>These snapshots were taken at different roots — the diff is not meaningful.</p>
+              <p style={{ margin: 0, fontSize: 11 }}>These snapshots were taken at different roots, so the diff is not meaningful.</p>
             </div>
           )}
           {diffErr && !diffing && (

@@ -227,7 +227,7 @@ export async function openNode(generation: number, id: number): Promise<void> {
     // association, access denied); surface it on the toast bus.
     window.dispatchEvent(
       new CustomEvent("db-toast", {
-        detail: { text: `Couldn't open this item — ${userFacingError(e)}` },
+        detail: { text: `Couldn’t open this item: ${userFacingError(e)}` },
       }),
     );
   }

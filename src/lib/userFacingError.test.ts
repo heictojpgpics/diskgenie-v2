@@ -26,6 +26,15 @@ describe("userFacingError", () => {
     );
   });
 
+  it("strips the new period-separated gate format too", () => {
+    expect(userFacingError("ACTIVATION_REQUIRED. Activate DiskGenie Pro to use this.")).toBe(
+      "Activate DiskGenie Pro to use this.",
+    );
+    expect(userFacingError("LICENSE_STALE. DiskGenie couldn't verify your license.")).toBe(
+      "DiskGenie couldn't verify your license.",
+    );
+  });
+
   it("handles a bare marker with no sentence (never an empty banner)", () => {
     expect(userFacingError("ACTIVATION_REQUIRED")).toBe("Something went wrong.");
   });

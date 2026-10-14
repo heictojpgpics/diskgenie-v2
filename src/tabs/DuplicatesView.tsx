@@ -263,8 +263,8 @@ export function DuplicatesView() {
   const subtitle = useMemo(() => {
     if (running) {
       return scopePath
-        ? `Scanning for duplicates inside ${scopePath} — this tab updates live.`
-        : "Scanning for duplicates — you can keep using the app, this tab updates live.";
+        ? `Scanning for duplicates inside ${scopePath}. This tab updates live.`
+        : "Scanning for duplicates. The app stays responsive while it runs, and this tab updates live.";
     }
     if (!result || stale) return "Byte-identical files, grouped for safe removal.";
     if (result.groups.length === 0) {
@@ -287,7 +287,7 @@ export function DuplicatesView() {
         <EmptyState
           icon={<CopyIcon size={28} />}
           title="Duplicates"
-          body={status === "scanning" ? "Scan in progress — duplicate detection starts once the tree is complete." : "Complete a disk scan to find duplicate files."}
+          body={status === "scanning" ? "Scan in progress. Duplicate detection starts as soon as the tree is complete." : "Complete a disk scan to find duplicate files."}
           action={
             status !== "scanning" ? (
               <button type="button" className="db-ink-button auto" onClick={() => void startScan("ThisPC")}>
@@ -335,8 +335,8 @@ export function DuplicatesView() {
           title="Find duplicate files"
           body={
             scopePath
-              ? `Byte-identical files inside ${scopePath} — keep one copy, stage the rest. The button scans your whole tree; select a folder in Explore and press “Duplicates here” to scope it.`
-              : "Screens every candidate in one pass, then verifies survivors byte-for-byte — grouping only true duplicates. Smart keep rules, filters, and one-click staging turn the findings into reclaimed space. Select a folder in Explore and press “Duplicates here” to scan just that folder."
+              ? `Byte-identical files inside ${scopePath}. Keep one copy, stage the rest. This button scans your whole tree; select a folder in Explore and press “Duplicates here” to narrow it down.`
+              : "Finds files with identical content and checks every byte before calling them duplicates. Keep rules, filters, and one-click staging turn the results into reclaimed space. To scan a single folder, select it in Explore and press “Duplicates here”."
           }
           action={
             <button type="button" className="db-ink-button auto" onClick={scan}>
@@ -352,8 +352,8 @@ export function DuplicatesView() {
           title="No duplicates"
           body={
             result.scopePath
-              ? `Every file inside ${result.scopePath} is unique — nothing to reclaim.`
-              : "Every file on this scan is unique — nothing to reclaim."
+              ? `Every file inside ${result.scopePath} is unique. Nothing to reclaim here.`
+              : "Every file in this scan is unique. Nothing to reclaim."
           }
         />
       )}
@@ -401,7 +401,7 @@ export function DuplicatesView() {
               </button>
               {applied > 0 && (
                 <span className="db-dup-applied" key={applied}>
-                  Rule applied — review the queue before deleting
+                  Rule applied. Review the queue before deleting
                 </span>
               )}
             </div>
@@ -490,7 +490,7 @@ export function DuplicatesView() {
                           <LocateIcon size={13} />
                         </button>
                         {isKept || isRuleKeep ? (
-                          <span className="db-keep-tag keep" title={isKept ? undefined : "Suggested by the keep rule — click another copy to override"}>
+                          <span className="db-keep-tag keep" title={isKept ? undefined : "Suggested by the keep rule. Click another copy to override"}>
                             <CheckIcon size={11} /> Keep
                           </span>
                         ) : isStaged ? (
@@ -516,7 +516,7 @@ export function DuplicatesView() {
                     {kept
                       ? `${g.count - 1} ${g.count - 1 === 1 ? "copy is" : "copies are"} staged; the kept file will remain untouched.`
                       : kept === undefined && applied > 0
-                        ? `Rule suggests keeping ${shortName(ruleKeep)} — “Keep this” on any copy overrides it.`
+                        ? `Rule suggests keeping ${shortName(ruleKeep)}. “Keep this” on any copy overrides it.`
                         : `Choose the copy to keep. DiskGenie will stage the other ${g.count - 1} for review (${bytes(g.wasted)}).`}
                   </div>
                 )}

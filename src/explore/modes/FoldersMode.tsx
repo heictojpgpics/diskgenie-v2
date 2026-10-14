@@ -128,7 +128,7 @@ export function FoldersMode(props: FoldersModeProps) {
             ))}
           </div>
           <div className="db-loading-block" role="status">
-            <span>{stale ? "Scan changed — reloading…" : "Loading folders…"}</span>
+            <span>{stale ? "Scan changed. Reloading…" : "Loading folders…"}</span>
           </div>
         </div>
       </div>
@@ -269,7 +269,7 @@ export function FoldersMode(props: FoldersModeProps) {
                       {f.cloud ? " · cloud" : ""}
                     </small>
                   </span>
-                  <b className="tnum">{f.cloud ? "—" : bytes(f.size)}</b>
+                  <b className="tnum">{f.cloud ? "n/a" : bytes(f.size)}</b>
                 </button>
               );
             })}
@@ -277,7 +277,7 @@ export function FoldersMode(props: FoldersModeProps) {
         )}
         {data.filesCapped && (
           <div className="db-files-more">
-            Showing the first {data.files.length} files — refine the filter to see more.
+            Showing the first {data.files.length} files. Refine the filter to see more.
           </div>
         )}
       </div>

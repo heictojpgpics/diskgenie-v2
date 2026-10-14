@@ -25,7 +25,7 @@ const PITCH: Record<TabId, { title: string; lines: string[] }> = {
     title: "Explore every byte of your disk",
     lines: [
       "Full-disk map in 9 visual modes",
-      "Quick Wins — the biggest safe space savings",
+      "Quick Wins: the biggest safe space savings",
       "Inspector, previews, and one-click cleanup",
     ],
   },
@@ -33,7 +33,7 @@ const PITCH: Record<TabId, { title: string; lines: string[] }> = {
     title: "Find and clear duplicate files",
     lines: [
       "Content-hash scan (bit-identical only)",
-      "Hardlink-aware — never a false positive",
+      "Hardlink-aware, never a false positive",
       "One-click review and cleanup",
     ],
   },
@@ -50,7 +50,7 @@ const PITCH: Record<TabId, { title: string; lines: string[] }> = {
     title: "Track what changed over time",
     lines: [
       "Point-in-time disk snapshots",
-      "Diff two snapshots — what grew, what shrank",
+      "Diff two snapshots: what grew, what shrank",
       "Keep your cleanup honest",
     ],
   },
@@ -104,7 +104,7 @@ export function ActivationGate({ tab }: { tab: TabId }) {
               ))}
             </ul>
             <p className="db-activation-gate-sub">
-              One licence covers one Windows PC and one Mac.
+              One license covers one Windows PC and one Mac.
             </p>
           </>
         )}
@@ -115,12 +115,12 @@ export function ActivationGate({ tab }: { tab: TabId }) {
           </button>
           {posture !== "degraded" && (
             <button type="button" className="db-activation-gate-secondary" onClick={openPurchase}>
-              Purchase Licence
+              Purchase License
             </button>
           )}
         </div>
         <p className="db-activation-gate-monitor">
-          The <strong>Monitor</strong> tab stays live — always.
+          The <strong>Monitor</strong> tab stays live, always.
         </p>
       </div>
     </div>

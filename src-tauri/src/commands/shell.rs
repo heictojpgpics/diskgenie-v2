@@ -118,7 +118,7 @@ pub fn preview_text(
         return Err(format!("node {id} not in tree"));
     };
     if n.is_cloud_placeholder() {
-        return Err("Stored in the cloud (not downloaded) — preview is disabled.".into());
+        return Err("Stored in the cloud (not downloaded), so preview is disabled.".into());
     }
     if n.is_dir() {
         return Err("Folders have no text preview.".into());

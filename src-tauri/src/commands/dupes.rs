@@ -239,7 +239,7 @@ fn resolve_scope(tree: &Tree, node: Option<u32>) -> Result<(u32, Option<String>)
         Some(id) => {
             let n = tree.node(id).ok_or_else(|| format!("unknown node {id}"))?;
             if !n.is_dir() {
-                return Err("Duplicates scans a folder — select a folder.".into());
+                return Err("Duplicates scans a folder. Select one to scope it.".into());
             }
             Ok((id, Some(tree.node_path(id))))
         }

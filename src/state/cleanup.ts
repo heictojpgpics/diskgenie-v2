@@ -79,7 +79,15 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
 
   stageMany: (items) => {
     if (items.length > 0) {
-      const source = items[0].reason.split(":")[0]?.split(" — ")[0] ?? "manual";
+      const source =
+        // Reason shapes: "Leftovers: App (Cache)", "Downloads (Quick win)",
+        // "Big & Untouched", "Duplicate", "Manual". Legacy " — " separators
+        // still parse during the transition.
+        items[0].reason
+          .split(":")[0]
+          ?.split(" — ")[0]
+          ?.split(" (")[0]
+          ?.trim() ?? "manual";
       track(EVENTS.cleanupStaged, {
         source,
         items: items.length,

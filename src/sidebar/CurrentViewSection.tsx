@@ -64,7 +64,7 @@ export function CurrentViewSection() {
           {viewPath ? (
             <TailPath path={viewPath} className="db-current-path" />
           ) : (
-            <span className="db-current-path">—</span>
+            <span className="db-current-path">No folder selected</span>
           )}
           <div className="db-sidebar-actions" style={{ marginTop: 9 }}>
             <OutlineButton onClick={reveal} title={REVEAL_NAME}>

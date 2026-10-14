@@ -171,13 +171,13 @@ impl std::fmt::Display for LicenseError {
         let s = match self {
             Self::InvalidKey => "Invalid license key. Please check it and try again.",
             Self::Inactive => "This license key is no longer active. Contact support.",
-            Self::Expired => "Your yearly license has expired — renew to keep DiskGenie Pro.",
+            Self::Expired => "Your yearly license has expired. Renew to keep DiskGenie Pro.",
             Self::DeviceSlotTaken => {
                 "This key is already activated on another device. Contact support to move your license."
             }
             Self::DeviceMismatch => "This device isn't registered with this license key.",
-            Self::RateLimited => "Too many attempts — wait a minute and try again.",
-            Self::Network => "Network unavailable — DiskGenie keeps working offline.",
+            Self::RateLimited => "Too many attempts. Wait a minute and try again.",
+            Self::Network => "Network unavailable. DiskGenie keeps working offline.",
             Self::ServerError => "The license server had a problem. Try again in a moment.",
             Self::Spoofed => {
                 "The license server's response could not be verified. Reconnect and try again."

@@ -201,7 +201,7 @@ export function ListMode(props: ListModeProps) {
                   <b style={{ width: `${Math.max(2, Math.min(100, row.share * 100))}%`, background: `#${row.color.toString(16).padStart(6, "0")}` }} />
                 </i>
                 <em className="tnum">{(row.share * 100).toFixed(1)}%</em>
-                <span className="db-list-items tnum">{row.isDir ? row.items.toLocaleString() : "—"}</span>
+                <span className="db-list-items tnum">{row.isDir ? row.items.toLocaleString() : "n/a"}</span>
                 <b className="tnum">{bytes(row.size)}</b>
               </button>
             );

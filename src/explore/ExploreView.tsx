@@ -281,7 +281,7 @@ export function ExploreView({ onPreview }: { onPreview: (id: number) => void }) 
           </span>
           <h2>Map every byte on your {MACHINE_NOUN}</h2>
           <p>
-            Scan your whole {MACHINE_NOUN}, your Home folder, or any folder — DiskGenie builds a
+            Scan your whole {MACHINE_NOUN}, your Home folder, or any folder. DiskGenie builds a
             complete tree and shows you exactly where the space went.
           </p>
           <div className="db-state-actions">
