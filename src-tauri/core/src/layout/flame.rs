@@ -156,7 +156,13 @@ fn layout_row(
                 return None;
             }
             let w = c.on_disk as f32 / total as f32 * span;
-            (w >= MIN_W).then_some((id, w))
+            // Sub-pixel blocks dropped below flag truncation (every
+            // other engine reports its culls; flame was silent).
+            if w < MIN_W {
+                *truncated = true;
+                return None;
+            }
+            Some((id, w))
         })
         .collect();
     if kept.is_empty() {

@@ -201,6 +201,9 @@ fn emit(
         }
         let r = (c.size as f32 / total as f32).sqrt() * usable;
         if r < MIN_R {
+            // Honest accounting: every other engine flags its culls;
+            // bubbles silently dropped sub-pixel circles.
+            *truncated = true;
             continue;
         }
         kids.push((i, 0.0, 0.0, r));
