@@ -121,3 +121,9 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 
 - **FoldersMode arrow nav actually covers files now**: the comment claimed "Files below the grid extend the same linear order" while `count` was folders-only — file tiles were unreachable by keyboard (Tab + Enter only, preview three clicks deep). The combined linear order (folders + files, shared 240px column template) with section-aware onMove/onActivate (Enter opens folders, previews files) and `data-file-nav` scroll-into-view. Live-verified: drill into C:, eight ArrowDowns land the selection on a `.db-file-row`.
 - **by-age regroup member cap**: MAX_CELLS/9 (the by-type category count) under-bucketed the 6-bucket age mode by a third; now sized per mode.
+
+## Milestone 9 (turbo MFT parse parallelized)
+
+- `parse_all` now runs `par_chunks_mut` (rayon): per-record parsing is race-free by construction (records are disjoint slices; every fixup patches only its own record's sector tails), order-stable so index alignment holds exactly as before. The old loop was single-threaded AND allocated a fresh 1 KiB copy per record (1-3M serial allocations + memcpys on a real volume — the turbo path's biggest CPU cost after the read itself). In-place fixups on the caller's buffer: zero copies, zero per-record allocations, N-core parse.
+- Signature `&[u8]` → `&mut [u8]` (the one caller — start_scan_turbo's thread — owns the buffer; tests updated in lockstep).
+- Gates: core 183+21+16 green + clippy + fmt; mirror (real scan.rs) 46 green + clippy clean.

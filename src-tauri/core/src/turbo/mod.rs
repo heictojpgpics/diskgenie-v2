@@ -25,43 +25,64 @@ pub struct Geometry {
     pub mft_valid_data_length: u64,
 }
 
+/// Per-record parse outcome (folded into the warning counts).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Ok,
+    /// Hole/BAAD/zeroed slot: index-aligned default, no warning.
+    Hole,
+    Torn,
+    Bad,
+}
+
 /// Parse the WHOLE staged MFT buffer (every slot, index-aligned) into
 /// entries + warnings. Torn/bad records are skipped and counted —
 /// never fatal (a single corrupt record must not kill a scan).
+///
+/// PARALLEL (`par_chunks_mut`, in-place fixups): records are disjoint
+/// slices and every fixup patches only its own record's sector tails,
+/// so per-record parsing is race-free. This replaces the previous
+/// single-threaded loop that ALSO allocated a fresh 1 KiB copy per
+/// record (1-3M serial allocations + memcpys on a real volume: the
+/// turbo path's biggest CPU cost). Order is preserved (rayon `map`
+/// is order-stable), so index alignment holds exactly as before.
 #[must_use]
 pub fn parse_all(
-    mft: &[u8],
+    mft: &mut [u8],
     geometry: &Geometry,
 ) -> (Vec<record::CompactEntry>, tree::TurboWarnings) {
-    let mut entries: Vec<record::CompactEntry> =
-        Vec::with_capacity(mft.len() / geometry.bytes_per_record as usize);
-    let mut warnings = tree::TurboWarnings::default();
+    use rayon::prelude::*;
     let sector = geometry.bytes_per_sector as usize;
     let rec_size = geometry.bytes_per_record as usize;
-    for (i, slot) in mft.chunks(rec_size).enumerate() {
-        // Own a mutable copy (fixup patches in place).
-        let mut buf = slot.to_vec();
-        if buf.len() < 0x30 {
-            warnings.bad += 1;
-            entries.push(record::CompactEntry::default());
-            continue;
-        }
-        match record::parse_record(&mut buf, i as u32, sector) {
-            Ok(e) => entries.push(e),
-            Err(record::RecordError::Torn) => {
-                warnings.torn += 1;
-                entries.push(record::CompactEntry::default());
+    let per_record: Vec<(record::CompactEntry, Outcome)> = mft
+        .par_chunks_mut(rec_size)
+        .enumerate()
+        .map(|(i, slot)| {
+            if slot.len() < 0x30 {
+                return (record::CompactEntry::default(), Outcome::Bad);
             }
-            Err(record::RecordError::NotFile) => {
-                // Holes/BAAD/zeroed slots keep index alignment.
-                entries.push(record::CompactEntry::default());
+            match record::parse_record(slot, i as u32, sector) {
+                Ok(e) => (e, Outcome::Ok),
+                Err(record::RecordError::Torn) => (record::CompactEntry::default(), Outcome::Torn),
+                Err(record::RecordError::NotFile) => {
+                    (record::CompactEntry::default(), Outcome::Hole)
+                }
+                Err(_) => (record::CompactEntry::default(), Outcome::Bad),
             }
-            Err(_) => {
-                warnings.bad += 1;
-                entries.push(record::CompactEntry::default());
+        })
+        .collect();
+    let mut warnings = tree::TurboWarnings::default();
+    let entries: Vec<record::CompactEntry> = per_record
+        .into_iter()
+        .map(|(e, outcome)| {
+            match outcome {
+                Outcome::Torn => warnings.torn += 1,
+                Outcome::Bad => warnings.bad += 1,
+                Outcome::Ok | Outcome::Hole => {}
             }
-        }
-    }
+            e
+        })
+        .collect();
     (entries, warnings)
 }
 
@@ -144,7 +165,7 @@ mod tests {
         rec2[2 * sector - 2..2 * sector].copy_from_slice(&usn.to_le_bytes());
         // Corrupt the second sector tail → torn.
         mft[1024 + 2 * sector - 1] ^= 0xFF;
-        let (entries, warnings) = parse_all(&mft, &GEOM);
+        let (entries, warnings) = parse_all(&mut mft, &GEOM);
         assert_eq!(entries.len(), 2);
         assert_eq!(warnings.torn, 1);
     }

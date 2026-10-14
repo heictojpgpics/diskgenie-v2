@@ -697,15 +697,17 @@ pub async fn start_scan_turbo(
                 match crate::platform::os::turbo_geometry(&drive_root) {
                     Ok((mut volume, geo)) => {
                         match crate::platform::os::turbo_read_mft(&mut volume, &geo) {
-                            Ok(mft) => {
+                            Ok(mut mft) => {
                                 let core_geo = diskgenie_core::turbo::Geometry {
                                     bytes_per_sector: geo.bytes_per_sector,
                                     bytes_per_cluster: geo.bytes_per_cluster,
                                     bytes_per_record: geo.bytes_per_record,
                                     mft_valid_data_length: geo.mft_valid_data_length,
                                 };
+                                // `mut`: parse_all applies the per-record
+                                // fixups in place (parallel, zero-copy).
                                 let (entries, warnings) =
-                                    diskgenie_core::turbo::parse_all(&mft, &core_geo);
+                                    diskgenie_core::turbo::parse_all(&mut mft, &core_geo);
                                 let records = entries.len() as u64;
                                 let mut build =
                                     diskgenie_core::turbo::tree::build_tree(entries, &label);
