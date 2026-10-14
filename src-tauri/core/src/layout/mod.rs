@@ -841,4 +841,211 @@ mod tests {
         assert_eq!(read(1), 777, "synthetic group id resolves via meta.groups");
         assert_eq!(read(2), 0, "unknown id resolves to 0 (never panics)");
     }
+
+    // ── Name-based folder family color tests ──────────────────────────
+    // The reference design (upload/extracted/refrence/ANALYSIS.md) pins
+    // stable hue-per-directory: Users=blue, Applications=mint,
+    // Library=yellow on EVERY scan. The legacy index-based
+    // folder_family_color broke this when sibling order shifted on
+    // real disks. folder_family_color_by_name is the fix.
+
+    #[test]
+    fn folder_family_color_by_name_well_known_mappings() {
+        // Users → blue (index 0 in the PALETTE).
+        let users = folder_family_color_by_name("Users", 0, 0);
+        let home = folder_family_color_by_name("home", 0, 0);
+        assert_eq!(
+            users, home,
+            "Users and home both map to blue (the reference Users=blue)"
+        );
+
+        // Applications → mint (index 1).
+        let apps = folder_family_color_by_name("Applications", 0, 0);
+        let pf = folder_family_color_by_name("Program Files", 0, 0);
+        let pfx86 = folder_family_color_by_name("Program Files (x86)", 0, 0);
+        assert_eq!(apps, pf, "Program Files maps to mint like Applications");
+        assert_eq!(apps, pfx86, "Program Files (x86) maps to mint too");
+
+        // Library → yellow (index 2).
+        let lib = folder_family_color_by_name("Library", 0, 0);
+        let progdata = folder_family_color_by_name("ProgramData", 0, 0);
+        assert_eq!(lib, progdata, "ProgramData maps to yellow like Library");
+
+        // Windows → slate (index 5).
+        let win = folder_family_color_by_name("Windows", 0, 0);
+        let svi = folder_family_color_by_name("System Volume Information", 0, 0);
+        assert_eq!(win, svi, "System Volume Information maps to slate like Windows");
+
+        // Downloads → amber (index 6).
+        let dl = folder_family_color_by_name("Downloads", 0, 0);
+        let docs = folder_family_color_by_name("Documents", 0, 0);
+        assert_eq!(dl, docs, "Documents maps to amber like Downloads");
+
+        // Desktop → green (index 7).
+        let desk = folder_family_color_by_name("Desktop", 0, 0);
+        let _music = folder_family_color_by_name("Music", 0, 0);
+        assert_eq!(
+            desk,
+            folder_family_color_by_name("Music", 0, 0),
+            "Music maps to green like Desktop"
+        );
+    }
+
+    #[test]
+    fn folder_family_color_by_name_case_insensitive_and_trimmed() {
+        // Case-insensitive: "USERS" == "users" == "Users".
+        let a = folder_family_color_by_name("Users", 0, 0);
+        let b = folder_family_color_by_name("USERS", 0, 0);
+        let c = folder_family_color_by_name("users", 0, 0);
+        assert_eq!(a, b, "USERS and Users map to the same color");
+        assert_eq!(a, c, "users and Users map to the same color");
+
+        // Trailing path separators stripped.
+        let with_sep = folder_family_color_by_name("Users/", 0, 0);
+        let with_bsep = folder_family_color_by_name("Users\\", 0, 0);
+        assert_eq!(a, with_sep, "Users/ == Users");
+        assert_eq!(a, with_bsep, "Users\\ == Users");
+    }
+
+    #[test]
+    fn folder_family_color_by_name_stable_across_calls() {
+        // The SAME name MUST return the SAME color every call (the
+        // legacy index-based version returned DIFFERENT colors when
+        // the sibling order shifted between scans).
+        let name = "Users";
+        let c1 = folder_family_color_by_name(name, 0, 0);
+        let c2 = folder_family_color_by_name(name, 0, 0);
+        let c3 = folder_family_color_by_name(name, 3, 7);
+        // Same name + same depth + same index → same color.
+        assert_eq!(c1, c2, "deterministic per (name, depth, index)");
+        // Different depth/index → different SHADE but same FAMILY.
+        // The shade formula darkens by depth*0.06 + index_odd*0.05.
+        // So c3 (depth 3, index 7) should be darker than c1 (depth 0, index 0).
+        // Both should be in the blue family though.
+        let r1 = ((c1 >> 16) & 0xFF) as u32;
+        let r3 = ((c3 >> 16) & 0xFF) as u32;
+        assert!(r3 <= r1, "deeper depth darkens the shade");
+    }
+
+    #[test]
+    fn folder_family_color_by_name_unknown_uses_stable_hash() {
+        // Unknown names fall back to a stable FNV-1a hash mod 8 —
+        // the SAME name always maps to the SAME family on every
+        // machine, but two DIFFERENT unknown names get different
+        // families (with high probability).
+        let custom1 = folder_family_color_by_name("MyProjectX", 0, 0);
+        let custom2 = folder_family_color_by_name("MyProjectX", 0, 0);
+        assert_eq!(custom1, custom2, "same unknown name → same color");
+
+        let other = folder_family_color_by_name("DifferentName", 0, 0);
+        // Two different unknown names should (very likely) map to
+        // different families. We can't assert inequality for ALL
+        // pairs (collision possible), but MyProjectX vs DifferentName
+        // hash to different mod-8 buckets.
+        if stable_name_hash("myprojectx") % 8 != stable_name_hash("differentname") % 8 {
+            assert_ne!(custom1, other, "different unknown names → different colors");
+        }
+    }
+
+    #[test]
+    fn stable_name_hash_is_deterministic_and_fnv1a() {
+        // FNV-1a 32-bit: 0x811C9DC5 offset, 0x0100_0193 prime.
+        // Empty string → offset basis.
+        assert_eq!(stable_name_hash(""), 0x811C_9DC5);
+        // "a" → (offset ^ 'a') * prime = (0x811C9DC5 ^ 0x61) * 0x01000193
+        let expected = 0x811C_9DC5 ^ u32::from(b'a');
+        let expected = expected.wrapping_mul(0x0100_0193);
+        assert_eq!(stable_name_hash("a"), expected);
+        // Deterministic.
+        assert_eq!(stable_name_hash("Users"), stable_name_hash("Users"));
+    }
+
+    #[test]
+    fn top_level_branch_id_walks_up_to_branch_root_child() {
+        use crate::scan::node::{BatchEntry, Node, Tree};
+        use crate::scan::rollup;
+        fn dir(name: &str) -> BatchEntry {
+            let mut node = Node::new_dir();
+            node.modified = 1;
+            BatchEntry {
+                name: name.encode_utf16().collect(),
+                node,
+            }
+        }
+        fn file(name: &str, on_disk: u64) -> BatchEntry {
+            let mut node = Node::new_file();
+            node.logical = on_disk;
+            node.on_disk = on_disk;
+            node.modified = 1;
+            BatchEntry {
+                name: name.encode_utf16().collect(),
+                node,
+            }
+        }
+        // root(0) → C:(1) → Users(2) → admin(3) → Documents(4) → file(5)
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "This PC");
+        t.append_batch(0, vec![dir("C:")]); // 1
+        t.append_batch(1, vec![dir("Users")]); // 2
+        t.append_batch(2, vec![dir("admin")]); // 3
+        t.append_batch(3, vec![dir("Documents")]); // 4
+        t.append_batch(4, vec![file("resume.pdf", 500)]); // 5
+        rollup::finalize(&mut t);
+
+        // branch_root = 1 (C: is the effective branch root — single
+        // sizeable child of "This PC"). The top-level branch of node 5
+        // (resume.pdf) is node 2 (Users), because Users's parent is C:
+        // (the branch_root).
+        assert_eq!(top_level_branch_id(&t, 5, 1), 2, "walks up to Users");
+        assert_eq!(top_level_branch_id(&t, 4, 1), 2, "Documents → Users");
+        assert_eq!(top_level_branch_id(&t, 3, 1), 2, "admin → Users");
+        assert_eq!(top_level_branch_id(&t, 2, 1), 2, "Users is itself the branch");
+        assert_eq!(top_level_branch_id(&t, 1, 1), 1, "C: == branch_root → itself");
+        assert_eq!(top_level_branch_id(&t, 0, 0), 0, "root with branch_root=0 → itself");
+    }
+
+    #[test]
+    fn node_color_by_folder_resolves_family_name() {
+        use crate::scan::node::{BatchEntry, Node, Tree};
+        use crate::scan::rollup;
+        fn dir(name: &str) -> BatchEntry {
+            let mut node = Node::new_dir();
+            node.modified = 1;
+            BatchEntry {
+                name: name.encode_utf16().collect(),
+                node,
+            }
+        }
+        fn file(name: &str, on_disk: u64) -> BatchEntry {
+            let mut node = Node::new_file();
+            node.logical = on_disk;
+            node.on_disk = on_disk;
+            node.modified = 1;
+            BatchEntry {
+                name: name.encode_utf16().collect(),
+                node,
+            }
+        }
+        // root(0) → C:(1) → Users(2) → admin(3) → resume.pdf(4)
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "This PC");
+        t.append_batch(0, vec![dir("C:")]);
+        t.append_batch(1, vec![dir("Users")]);
+        t.append_batch(2, vec![dir("admin")]);
+        t.append_batch(3, vec![file("resume.pdf", 500)]);
+        rollup::finalize(&mut t);
+
+        let now = 1_800_000_000;
+        let branch_root = 1; // C:
+        // The resume.pdf file's family is "Users" (its top-level
+        // branch). node_color should resolve it via name and return
+        // the BLUE family color — the SAME color as a direct call
+        // to folder_family_color_by_name("Users", ...).
+        let color_deep = node_color(&t, 4, ColorMode::ByFolder, now, branch_root, 3, 0);
+        let color_users_direct = folder_family_color_by_name("Users", 3, 0);
+        assert_eq!(
+            color_deep, color_users_direct,
+            "deep descendant of Users gets Users' family color (name-based, not index-based)"
+        );
+    }
 }
