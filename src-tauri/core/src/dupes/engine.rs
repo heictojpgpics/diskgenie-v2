@@ -1262,6 +1262,98 @@ mod tests {
         assert_eq!(ids.len(), 2);
     }
 
+    /// The hardlink closure IS called during verify and captures
+    /// (volume_serial, file_index) from each verified member's
+    /// already-open File handle. This is the perf fix that collapses
+    /// the v2 third-open (10k files × 20ms Defender scan = 200s saved).
+    #[test]
+    fn hardlink_closure_captures_identity_from_open_verify_handle() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let (_t, d) = stage("hardlink-capture");
+        let cfg = small_cfg();
+        // Two identical files above the prefix length (so they go
+        // through verify_bucket, not the tiny-file direct-emit path).
+        let size = cfg.prefix_len + 3 * cfg.sample_len;
+        let payload = fmt_blob(5, 0x0505, size as usize);
+        fs::write(d.join("a.bin"), &payload).unwrap();
+        fs::write(d.join("b.bin"), &payload).unwrap();
+
+        // Count how many times the closure is called — should be
+        // exactly 2 (one per verified member).
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let hardlink = move |f: &std::fs::File| {
+            cc.fetch_add(1, Ordering::Relaxed);
+            // Return a synthetic identity derived from the file's
+            // metadata (the test just needs the closure to be called
+            // with a real open handle and return a value).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let md = f.metadata().ok()?;
+                Some((md.dev(), md.ino()))
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                let md = f.metadata().ok()?;
+                Some((md.volume_serial_number() as u64, md.file_index() as u64))
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                let _ = f;
+                None::<(u64, u64)>
+            }
+        };
+
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, &hardlink).expect("engine");
+        assert_eq!(groups.len(), 1, "one verified group");
+        assert_eq!(groups[0].files.len(), 2, "two members");
+        // The closure was called for each verified member.
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            2,
+            "hardlink closure called once per verified member"
+        );
+        // The captured (vs, fi) fields are populated (non-zero on
+        // real filesystems; the closure returned real metadata).
+        for f in &groups[0].files {
+            assert!(
+                f.volume_serial != 0 || f.file_index != 0,
+                "hardlink identity captured from open handle (path={})",
+                f.path
+            );
+        }
+    }
+
+    /// Tiny files (size ≤ prefix_len) skip verify_bucket entirely
+    /// (the prefix screen hashed the full content). They leave with
+    /// volume_serial=0 and file_index=node_id — the caller's signal
+    /// to do the legacy one-open for hardlink identity.
+    #[test]
+    fn tiny_files_leave_zero_volume_serial_for_caller_fallback() {
+        let (_t, d) = stage("tiny-fallback");
+        let cfg = small_cfg();
+        // Two identical files SMALLER than the prefix length.
+        let size = (cfg.prefix_len / 2) as usize;
+        let payload = fmt_blob(3, 0x0303, size);
+        fs::write(d.join("small_a.bin"), &payload).unwrap();
+        fs::write(d.join("small_b.bin"), &payload).unwrap();
+
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, no_hardlink()).expect("engine");
+        assert_eq!(groups.len(), 1, "tiny pair verified by prefix screen");
+        assert_eq!(groups[0].files.len(), 2);
+        // volume_serial == 0 signals "caller, do the legacy open".
+        // file_index falls back to node_id (the honest default).
+        for f in &groups[0].files {
+            assert_eq!(
+                f.volume_serial, 0,
+                "tiny files skip verify so no handle captured"
+            );
+        }
+    }
+
     /// Performance smoke: a small real-I/O corpus with a loose
     /// throughput floor. Not a benchmark (criterion owns those) —
     /// this catches "the engine became CPU-bound" regressions.
