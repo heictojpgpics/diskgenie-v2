@@ -96,3 +96,13 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 - Layout engine layout expects (guard them like names_batch was hardened).
 - FoldersMode file tiles not arrow-key reachable (comment mismatch).
 - The by-age regroup member cap uses 9 (the by-type group count) — under-buckets age modes.
+
+## Milestone 5 (scan lifecycle de-triplication)
+
+- **The namesake refactor**: the three start paths (start_scan, start_scan_turbo's success arm, its standard-fallback arm) plus the flip-cache restore each hand-carried the same ordering-invariant sequences — four copies of `swap_tree → clear_all_caches → sticky last_done → scan-done emit`, three of the failure pair, two of the cancel prelude. Extracted:
+  * `cancel_previous(state)` — the cancel-old-scan + kill-duplicates prelude
+  * `complete_scan(state, app, tree, generation, key)` — the completion sequence, returns root stats
+  * `record_scan_failure(state, app, generation, reason)` — the failure pair
+- scan.rs 867 → 818 lines while ADDING the three documented helpers; ~120 lines of invariant code now live once. A subtle correctness ALIGNMENT fell out: the standard Done arm used to read root stats from the tree AFTER the swap (which, in a superseded-generation race, could be a NEWER scan's tree filed under OUR generation's record); complete_scan reads from the tree being swapped — the turbo arm's already-correct behavior, now uniform.
+- The stale doc comment claiming "splitting across helpers would hide the ordering invariants" updated: the helpers ARE the invariants, named and documented.
+- Gates: mirror (real scan.rs included) 46 green + clippy clean; core 183+21+16; tsc 0; vitest 132.

@@ -111,9 +111,11 @@ pub fn parse_target(s: &str) -> ScanTarget {
 /// String error when the license gate refuses, or when a contended
 /// tree restore's background copy fails.
 #[tauri::command]
-/// The scan lifecycle in one place (cancellation, swap, events,
-/// telemetry) — splitting it across helpers would hide the ordering
-/// invariants (generation guard → swap → cache clear → done event).
+/// The scan lifecycle's ordering invariants live ONCE, in the helpers:
+/// `cancel_previous` (the prelude), `complete_scan` (swap → caches →
+/// sticky record → event), `record_scan_failure` (the failure pair).
+/// This command stays a thin orchestration: gate → cancel → restore
+/// check → spawn the engine + ticker → register the handle.
 #[allow(clippy::too_many_lines)]
 pub async fn start_scan(
     target: String,
@@ -133,25 +135,9 @@ pub async fn start_scan(
     )?;
     // Cancel any running scan (cooperative; its thread exits without
     // swapping its tree — spec §4 "starting a new scan cancels the old")
-    // AND any running duplicates pipeline: the tree it is hashing is
-    // about to be replaced, so the run's results would describe a
-    // dead world (the "stuck hashing a superseded tree" waste — a
-    // multi-GB hash burning I/O behind a fresh scan).
-    {
-        let scan = state.scan.lock();
-        if let Some(old) = scan.as_ref() {
-            old.cancel.store(true, Ordering::SeqCst);
-        }
-        state.dupes_cancel.fetch_add(1, Ordering::SeqCst);
-        // Drop the sticky dupes result now — the pipeline's own
-        // resolution clears `running` a beat later (cooperative cancel).
-        {
-            let mut st = state.dupes_status.lock();
-            st.result = None;
-            st.error = None;
-            st.progress = None;
-        }
-    }
+    // AND any running duplicates pipeline. One helper, shared by every
+    // start path (the hand-copies had drifted).
+    cancel_previous(&state);
 
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let scan_target = parse_target(&target);
@@ -192,34 +178,12 @@ pub async fn start_scan(
                 Arc::new(owned)
             }
         };
-        let root_stats = tree.root_stats();
+        let root_stats = complete_scan(&state, &app, tree, generation, &cache_key);
         // Structured line for the benchmark harness: an instant restore
         // proves the flip cache served the tree (no walk happened).
         eprintln!(
             "[bench] scan restored gen={generation} files={} dirs={} bytes={}",
             root_stats.2, root_stats.3, root_stats.1
-        );
-        // swap_tree files the tree being displaced under ITS key
-        // (the symmetric flip-back) — the restore consumes the
-        // cache entry, the swap refills it with what was on screen.
-        // A superseded restore (a newer start_scan raced us onto
-        // the slot) is the Cancelled-arm contract: no swap, no
-        // event; the consumed entry self-heals on the next
-        // completion.
-        swap_tree(&state, tree, generation, &cache_key);
-        clear_all_caches(&app);
-        *state.last_done.lock() = crate::state::DoneRecord {
-            generation,
-            stats: Some(root_stats),
-            error: None,
-        };
-        let _ = app.emit(
-            "scan-done",
-            ScanDone {
-                generation,
-                stats: Some(root_stats),
-                error: None,
-            },
         );
         return Ok(ScanStart {
             generation,
@@ -287,41 +251,20 @@ pub async fn start_scan(
 
         match outcome {
             ScanOutcome::Done(tree) => {
-                swap_tree(&state_inner, Arc::new(tree), generation, &key_for_thread);
+                let root_stats = complete_scan(
+                    &state_inner,
+                    &app_handle,
+                    Arc::new(tree),
+                    generation,
+                    &key_for_thread,
+                );
                 // Structured timing line for the capture/benchmark
                 // harnesses (plain stderr; same posture as the dupes
                 // pipeline's eprintln diagnostics).
                 eprintln!(
                     "[bench] scan done engine={engine_label} gen={generation} ms={} files={} dirs={} bytes={}",
                     started.elapsed().as_millis(),
-                    state_inner.tree.read().as_ref().map_or(0, |t| t.root_stats().2),
-                    state_inner.tree.read().as_ref().map_or(0, |t| t.root_stats().3),
-                    state_inner.tree.read().as_ref().map_or(0, |t| t.root_stats().1)
-                );
-                // Layout caches are generation-keyed; drop stale entries on
-                // swap (doc 03 M4.1). Same for the regroup / Top Sizes /
-                // Age Map caches (spec §7.7/§7.8: cached per generation).
-                clear_all_caches(&app_handle);
-                let root_stats = {
-                    let guard = state_inner.tree.read();
-                    guard.as_ref().map(|t| t.root_stats())
-                };
-                // Sticky outcome BEFORE the emit: a tiny tree can finish
-                // before the `start_scan` round-trip resolves, so the
-                // `scan-done` event is dropped as stale by the store —
-                // `get_status` replays this record for the reconcile.
-                *state_inner.last_done.lock() = crate::state::DoneRecord {
-                    generation,
-                    stats: root_stats,
-                    error: None,
-                };
-                let _ = app_handle.emit(
-                    "scan-done",
-                    ScanDone {
-                        generation,
-                        stats: root_stats,
-                        error: None,
-                    },
+                    root_stats.2, root_stats.3, root_stats.1
                 );
             }
             ScanOutcome::Cancelled => {
@@ -329,19 +272,7 @@ pub async fn start_scan(
                 // event (the NEW scan's events own the UI now).
             }
             ScanOutcome::RootFailed(reason) => {
-                *state_inner.last_done.lock() = crate::state::DoneRecord {
-                    generation,
-                    stats: None,
-                    error: Some(reason.clone()),
-                };
-                let _ = app_handle.emit(
-                    "scan-done",
-                    ScanDone {
-                        generation,
-                        stats: None,
-                        error: Some(reason),
-                    },
-                );
+                record_scan_failure(&state_inner, &app_handle, generation, reason);
             }
         }
     });
@@ -466,6 +397,8 @@ pub fn cancel_scan(state: State<'_, AppState>) -> bool {
 /// tree — a same-target swap is an explicit re-scan, so the displaced
 /// snapshot is stale BY CHOICE and drops; an empty old key (unknown
 /// lineage) drops un-cached.
+/// Swap the finished tree in, FILING the displaced tree into the flip
+/// cache (see `swap_tree`).
 fn swap_tree(state: &AppState, new: Arc<Tree>, generation: u64, new_key: &str) {
     // Everything under ONE write-lock hold: the generation guard, the
     // swap, the displaced tree's cache filing, and the key handover —
@@ -494,6 +427,83 @@ fn swap_tree(state: &AppState, new: Arc<Tree>, generation: u64, new_key: &str) {
     if let Some(tree) = to_drop {
         std::thread::spawn(move || drop(tree));
     }
+}
+
+/// Cancel any running scan AND duplicates pipeline. The shared prelude
+/// of every scan start (spec §4 "starting a new scan cancels the old");
+/// the duplicates kill exists because the tree the pipeline is hashing
+/// is about to be replaced (a multi-GB hash burning I/O behind a fresh
+/// scan describes a dead world). Extracted from the three start paths —
+/// the triplicated copies had already started drifting in comments.
+fn cancel_previous(state: &AppState) {
+    {
+        let scan = state.scan.lock();
+        if let Some(old) = scan.as_ref() {
+            old.cancel.store(true, Ordering::SeqCst);
+        }
+        state.dupes_cancel.fetch_add(1, Ordering::SeqCst);
+        // Drop the sticky dupes result now — the pipeline's own
+        // resolution clears `running` a beat later (cooperative cancel).
+        let mut st = state.dupes_status.lock();
+        st.result = None;
+        st.error = None;
+        st.progress = None;
+    }
+}
+
+/// The completion sequence, ONCE: `swap_tree → clear_all_caches →
+/// sticky last_done → scan-done emit`. Every start path (standard scan,
+/// turbo success, turbo's standard-fallback, the flip-cache restore)
+/// walked this exact ordering — four hand-copies of the invariant that
+/// a superseded generation must never swap. Returns the swapped tree's
+/// root stats. The sticky record BEFORE the emit is load-bearing: a
+/// tiny tree can finish before the `start_scan` round-trip resolves,
+/// so the event is dropped as stale by the store and `get_status`
+/// replays this record for the reconcile.
+fn complete_scan(
+    state: &AppState,
+    app: &AppHandle,
+    tree: Arc<Tree>,
+    generation: u64,
+    cache_key: &str,
+) -> (u64, u64, u64, u64) {
+    let root_stats = tree.root_stats();
+    swap_tree(state, tree, generation, cache_key);
+    clear_all_caches(app);
+    *state.last_done.lock() = crate::state::DoneRecord {
+        generation,
+        stats: Some(root_stats),
+        error: None,
+    };
+    let _ = app.emit(
+        "scan-done",
+        ScanDone {
+            generation,
+            stats: Some(root_stats),
+            error: None,
+        },
+    );
+    root_stats
+}
+
+/// The failure sequence, ONCE: sticky `last_done` + the `scan-done`
+/// event carrying the reason (no swap, no cache clear — there is no
+/// new tree). Standard `RootFailed`, the turbo fallback's `RootFailed`,
+/// and the turbo no-tree arm all walked this exact pair.
+fn record_scan_failure(state: &AppState, app: &AppHandle, generation: u64, reason: String) {
+    *state.last_done.lock() = crate::state::DoneRecord {
+        generation,
+        stats: None,
+        error: Some(reason.clone()),
+    };
+    let _ = app.emit(
+        "scan-done",
+        ScanDone {
+            generation,
+            stats: None,
+            error: Some(reason),
+        },
+    );
 }
 
 /// Dev hooks (spec §15): `DISKGENIE_SCAN` / `--scan` auto-start targets,
@@ -649,19 +659,9 @@ pub async fn start_scan_turbo(
     let cache_key = tree_cache_key(&drive_root);
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-    // Cancel any standard scan in flight (same contract as start_scan,
-    // including the running-duplicates kill).
-    {
-        let scan = state.scan.lock();
-        if let Some(old) = scan.as_ref() {
-            old.cancel.store(true, Ordering::SeqCst);
-        }
-        state.dupes_cancel.fetch_add(1, Ordering::SeqCst);
-        let mut st = state.dupes_status.lock();
-        st.result = None;
-        st.error = None;
-        st.progress = None;
-    }
+    // Cancel any standard scan in flight (the shared prelude, same
+    // contract as start_scan, including the running-duplicates kill).
+    cancel_previous(&state);
     // Turbo scans register a ScanHandle too: without one, cancel_scan
     // flipped a flag on a STALE handle while the MFT read ran
     // uncancelled — the Stop button was a no-op during turbo scans.
@@ -731,26 +731,12 @@ pub async fn start_scan_turbo(
             match (tree_opt, reason) {
                 (Some(tree), None) => {
                     state_inner.end_scanning(generation);
-                    let root_stats = tree.root_stats();
-                    swap_tree(
+                    complete_scan(
                         &state_inner,
+                        &app_handle,
                         std::sync::Arc::new(tree),
                         generation,
                         &key_for_thread,
-                    );
-                    clear_all_caches(&app_handle);
-                    *state_inner.last_done.lock() = crate::state::DoneRecord {
-                        generation,
-                        stats: Some(root_stats),
-                        error: None,
-                    };
-                    let _ = app_handle.emit(
-                        "scan-done",
-                        ScanDone {
-                            generation,
-                            stats: Some(root_stats),
-                            error: None,
-                        },
                     );
                     if let Some(r) = report {
                         let _ = app_handle.emit("turbo-report", r);
@@ -777,61 +763,27 @@ pub async fn start_scan_turbo(
                     state_inner.end_scanning(generation);
                     match outcome {
                         ScanOutcome::Done(tree) => {
-                            let root_stats = tree.root_stats();
-                            swap_tree(
+                            complete_scan(
                                 &state_inner,
+                                &app_handle,
                                 std::sync::Arc::new(tree),
                                 generation,
                                 &key_for_thread,
                             );
-                            clear_all_caches(&app_handle);
-                            *state_inner.last_done.lock() = crate::state::DoneRecord {
-                                generation,
-                                stats: Some(root_stats),
-                                error: None,
-                            };
-                            let _ = app_handle.emit(
-                                "scan-done",
-                                ScanDone {
-                                    generation,
-                                    stats: Some(root_stats),
-                                    error: None,
-                                },
-                            );
                         }
                         ScanOutcome::RootFailed(r) => {
-                            *state_inner.last_done.lock() = crate::state::DoneRecord {
-                                generation,
-                                stats: None,
-                                error: Some(r.clone()),
-                            };
-                            let _ = app_handle.emit(
-                                "scan-done",
-                                ScanDone {
-                                    generation,
-                                    stats: None,
-                                    error: Some(r),
-                                },
-                            );
+                            record_scan_failure(&state_inner, &app_handle, generation, r);
                         }
                         ScanOutcome::Cancelled => {}
                     }
                 }
                 (None, None) => {
                     state_inner.end_scanning(generation);
-                    let reason = "The turbo engine produced no tree.".to_string();
-                    *state_inner.last_done.lock() = crate::state::DoneRecord {
+                    record_scan_failure(
+                        &state_inner,
+                        &app_handle,
                         generation,
-                        stats: None,
-                        error: Some(reason.clone()),
-                    };
-                    let _ = app_handle.emit(
-                        "scan-done",
-                        ScanDone {
-                            generation,
-                            stats: None,
-                            error: Some(reason),
-                        },
+                        "The turbo engine produced no tree.".to_string(),
                     );
                 }
             }

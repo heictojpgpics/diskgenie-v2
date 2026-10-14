@@ -773,10 +773,8 @@ mod tests {
 
         /// Unique scratch dir under %TEMP% (no tempfile dep).
         fn scratch(name: &str) -> PathBuf {
-            let d = std::env::temp_dir().join(format!(
-                "db-dupes-e2e-{}-{name}",
-                std::process::id()
-            ));
+            let d =
+                std::env::temp_dir().join(format!("db-dupes-e2e-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&d); // R7.1-allow: test-scratch
             fs::create_dir_all(&d).expect("scratch dir");
             d
@@ -915,9 +913,17 @@ mod tests {
         /// genuine file to the OS cache + Defender) — shared by the
         /// performance corpus below.
         const FORMATS: [(&str, &[u8]); 8] = [
-            ("jpg", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F']),
+            (
+                "jpg",
+                &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'],
+            ),
             ("png", &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
-            ("mp4", &[0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm']),
+            (
+                "mp4",
+                &[
+                    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm',
+                ],
+            ),
             ("zip", &[b'P', b'K', 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
             ("pdf", b"%PDF-1.7"),
             ("iso", &[0x01, b'C', b'D', 0x00, 0x01]),
@@ -983,8 +989,7 @@ mod tests {
                     // Duplicate of the PREVIOUS file (same content,
                     // same size) → an exact group of 2. The pair's
                     // size is the PREVIOUS index's (the copied file).
-                    let prev =
-                        format!("shot_{:03}.{}", i - 1, FORMATS[((i - 1) % 8) as usize].0);
+                    let prev = format!("shot_{:03}.{}", i - 1, FORMATS[((i - 1) % 8) as usize].0);
                     let pair_size = (64 + (i - 1) % 129) * kib;
                     fs::copy(
                         small_dir.join(&prev),
@@ -1192,7 +1197,10 @@ mod tests {
                 assert!(hit.is_some(), "missing group size={size} count={count}");
                 for n in names {
                     assert!(
-                        hit.unwrap().files.iter().any(|f| f.path.contains(n.as_str())),
+                        hit.unwrap()
+                            .files
+                            .iter()
+                            .any(|f| f.path.contains(n.as_str())),
                         "group member {n} missing: {:?}",
                         hit.unwrap().files
                     );
