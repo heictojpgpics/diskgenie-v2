@@ -402,7 +402,18 @@ fn layout_branches(
         if c.is_removed() || c.on_disk == 0 {
             continue;
         }
-        let span = c.on_disk as f32 / total as f32 * (a1 - a0);
+        // Ring 1 (depth_here == 1): EVEN angular distribution so a
+        // 95%-dominant drive no longer eats 95% of the circle (the
+        // reference design shows N evenly-spaced spokes from the
+        // hub, with weight reflected ONLY in dot radius — see line
+        // 443's `sqrt(share of the ROOT)` cap). Deeper rings keep
+        // weight-based distribution so the radial pattern still
+        // reflects sub-folder sizing.
+        let span = if depth_here == 1 {
+            (a1 - a0) / children.len().max(1) as f32
+        } else {
+            c.on_disk as f32 / total as f32 * (a1 - a0)
+        };
         let mid = cursor + span / 2.0;
         let is_spine = spine == Some(id);
         // Position: normal children sit at the ring radius along their
