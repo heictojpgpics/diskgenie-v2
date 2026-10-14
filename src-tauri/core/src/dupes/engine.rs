@@ -1302,13 +1302,16 @@ mod tests {
                 let md = f.metadata().ok()?;
                 Some((md.dev(), md.ino()))
             }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                let md = f.metadata().ok()?;
-                Some((md.volume_serial_number() as u64, md.file_index() as u64))
-            }
-            #[cfg(not(any(unix, windows)))]
+            // Windows: std::os::windows::fs::MetadataExt's
+            // volume_serial_number()/file_index() are unstable
+            // (feature `windows_by_handle`, nightly-only). The
+            // production code uses the `windows` crate's
+            // GetFileInformationByHandle instead (see
+            // platform/win/license.rs). This test just verifies the
+            // closure IS CALLED; returning None lets the engine's
+            // fallback (file_index = member idx) fill in non-zero,
+            // so the assertion below still holds.
+            #[cfg(not(unix))]
             {
                 let _ = f;
                 None::<(u64, u64)>
