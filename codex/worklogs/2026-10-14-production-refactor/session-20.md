@@ -127,3 +127,15 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 - `parse_all` now runs `par_chunks_mut` (rayon): per-record parsing is race-free by construction (records are disjoint slices; every fixup patches only its own record's sector tails), order-stable so index alignment holds exactly as before. The old loop was single-threaded AND allocated a fresh 1 KiB copy per record (1-3M serial allocations + memcpys on a real volume — the turbo path's biggest CPU cost after the read itself). In-place fixups on the caller's buffer: zero copies, zero per-record allocations, N-core parse.
 - Signature `&[u8]` → `&mut [u8]` (the one caller — start_scan_turbo's thread — owns the buffer; tests updated in lockstep).
 - Gates: core 183+21+16 green + clippy + fmt; mirror (real scan.rs) 46 green + clippy clean.
+
+## Milestone 10 (turbo tree build allocation churn)
+
+- Children table: `Vec<Vec<u32>>` (one allocation per MFT record, 1-3M mostly-empty Vecs on a real volume) → CSR (counts + prefix-sum offsets + flat array): 3 allocations total, same semantics.
+- Pass-4 emission: per-record `append_batch(vec![...])` (one Vec + one tree lock per record) → per-parent-block batches (BFS enqueues each parent's children contiguously; the block merges into one append). Node construction factored into `node_entry_of`.
+- All 24 turbo tests green (BFS, extension folding, cycle cutting, unreferenced bucket, hardlink charge-once policy); core 222 total; mirror 46 + clippy clean.
+
+## Session close (12:35 UTC, ~80 min of continuous work)
+
+10 pushed milestones on `refactor/production-grade-2026-10-14`; main untouched. Final gates: Rust core 183 lib + 2 + 21 platform + 16 property; scratch-win mirror (real commands incl. scan.rs/layout.rs/license.rs) 46 + clippy -D warnings clean + fmt clean; tsc 0 errors; vitest 132/132; version-sync green. Live browser verification: 18 screenshots in /home/z/my-project/verify/ (boot, license flow, scan, all 5 canvas modes, age-map light+dark, bubbles before/after, narrow 900px, all 4 tabs, duplicates results page, keyboard nav proof); every visual claim VLM-audited.
+
+Follow-ups for the next session are listed above (turbo remaining single-threaded rollup finalize, remaining hold-the-lock guard sites, mock regroup modes, winsxs sharding, startScanTurbo/deactivate store surface decision).
