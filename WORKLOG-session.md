@@ -265,3 +265,24 @@ Stage Summary:
 - 188 Rust + 131 TS = 319 total tests green
 - 10 commits on draft branch, all pushed to GitHub
 - 30 baseline screenshots, 6 VLM verification JSONs
+
+---
+Task ID: SESSION-CLOSING
+Agent: Senior Rust Engineer (main agent)
+Task: Final tests + em-dash cleanup + closing summary
+
+Work Log:
+- 13:10 — Second-pass em-dash cleanup: fixed user-facing strings in ActivationGate (4 feature bullets), CleanupQueuePopover (6 strings), PreviewOverlay, LicenseDialog, TourDriver, InspectorPanel. All em-dashes replaced with periods or middots.
+- 13:12 — Committed + pushed (4832bf0).
+- 13:15 — Added 2 regression tests for the dupes hardlink-capture perf fix:
+  - hardlink_closure_captures_identity_from_open_verify_handle: stages 2 identical files above prefix length, passes a closure that counts calls + returns real metadata, asserts closure called exactly twice (once per verified member) and captured volume_serial/file_index are non-zero.
+  - tiny_files_leave_zero_volume_serial_for_caller_fallback: stages 2 identical files below prefix length (skip verify), asserts volume_serial == 0 (caller's signal to do legacy open).
+- 13:17 — 190 Rust tests pass (was 188 + 2 new). 131 TS tests pass. Total: 321 tests green.
+- 13:18 — Committed + pushed (3acb334).
+- 13:22 — Investigated duplicate test helpers (blob/fmt_blob/FORMATS/TempTree) between engine.rs tests and commands/dupes.rs windows_e2e tests. These are in DIFFERENT CRATES (core vs tauri app) — test helpers can't be shared across crates without a new test-utils crate. Deferred as a structural change not worth the risk.
+
+Stage Summary:
+- 14 commits on draft branch, all pushed to GitHub
+- 321 total tests green (190 Rust + 131 TS)
+- 6 VLM-verified visual fixes + 2 perf fixes + 9 regression tests + full em-dash cleanup
+- Known deferred (follow-up): screen→verify File handle threading, verify_bucket HashMap→in-place partition, cross-crate test-helper dedup (needs test-utils crate), Cargo dep bumps, CI screenshot duplicate fix, 1000+ real-file dupes tests (needs Windows runner)
