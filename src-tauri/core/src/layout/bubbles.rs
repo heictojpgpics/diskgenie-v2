@@ -137,7 +137,7 @@ type Placed = (usize, f32, f32, f32);
 /// Emit the circle for `b` at `(cx, cy)` with radius `drawn_r`, then
 /// allocate + pack + recursively emit its children inside. `top_index` is
 /// the inherited by-folder family; `branch_root`'s children re-assign it.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn emit(
     tree: &Tree,
     b: &Bubble,
@@ -356,10 +356,10 @@ fn ring_pack(kids: &mut [Placed]) {
                     // Check overlap with ALL placed circles (the new
                     // position must not overlap any of them).
                     let mut overlaps = false;
-                    for m in 0..i {
-                        let rm = kids[m].3;
-                        let dx = x - kids[m].1;
-                        let dy = y - kids[m].2;
+                    for kid in kids.iter().take(i) {
+                        let rm = kid.3;
+                        let dx = x - kid.1;
+                        let dy = y - kid.2;
                         let min_dist = ri + rm + GAP;
                         if dx * dx + dy * dy < min_dist * min_dist {
                             overlaps = true;
@@ -378,10 +378,12 @@ fn ring_pack(kids: &mut [Placed]) {
         // (rare edge case with many equal-sized circles), place on a
         // ring outside everything that's been placed.
         if best_dist_sq == f32::INFINITY {
-            let max_extent: f32 = (0..i)
-                .map(|m| {
-                    let rm = kids[m].3;
-                    ((kids[m].1).powi(2) + (kids[m].2).powi(2)).sqrt() + rm
+            let max_extent: f32 = kids
+                .iter()
+                .take(i)
+                .map(|kid| {
+                    let rm = kid.3;
+                    ((kid.1).powi(2) + (kid.2).powi(2)).sqrt() + rm
                 })
                 .fold(0.0f32, f32::max);
             best_x = max_extent + ri + GAP;

@@ -70,7 +70,7 @@ pub fn bucket_totals(tree: &Tree, id: u32, now: i64) -> AgeBuckets {
 ///
 /// `rename_all = "camelCase"` is load-bearing: the TS twin in
 /// `src/viz/exploreIpc.ts` types these fields as `firstYear` /
-/// `lastYear`. Without it, serde emits snake_case keys, the JS reads
+/// `lastYear`. Without it, serde emits `snake_case` keys, the JS reads
 /// `undefined`, the year loop never iterates, and the heatmap renders
 /// blank on the real backend (the mock escaped this because it builds
 /// the object in JS with camelCase directly).

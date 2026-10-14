@@ -425,13 +425,19 @@ pub fn folder_family_color_by_name(name: &str, depth: u16, index: usize) -> u32 
         "applications" | "program files" | "program files (x86)" => 1,
         "library" | "programdata" => 2,
         "private" | "private/var" | "var" | "var/db" | "var/log" => 3,
-        "usr" | "usr/local" | "bin" | "sbin" | "etc" | "opt" => 4,
-        "windows" | "system volume information" | "system32" | "syswow64" | "winsxs" => 5,
+        // Pink family: Unix bin dirs + Pictures/Photos + Recycle Bin.
+        "usr" | "usr/local" | "bin" | "sbin" | "etc" | "opt" | "pictures" | "photos" | "images"
+        | "$recycle.bin" | "trash" | ".trash" => 4,
+        // Slate family: Windows system + Videos/Movies.
+        "windows"
+        | "system volume information"
+        | "system32"
+        | "syswow64"
+        | "winsxs"
+        | "videos"
+        | "movies" => 5,
         "downloads" | "documents" | "documents and settings" => 6,
         "desktop" | "music" | "itunes" => 7,
-        "pictures" | "photos" | "images" => 4, // pink
-        "videos" | "movies" => 5,              // slate
-        "$recycle.bin" | "trash" | ".trash" => 4,
         // Stable hash for unknown names.
         _ => stable_name_hash(&key) as usize % PALETTE.len(),
     };
@@ -904,10 +910,10 @@ mod tests {
         assert_eq!(a, c, "users and Users map to the same color");
 
         // Trailing path separators stripped.
-        let with_sep = folder_family_color_by_name("Users/", 0, 0);
-        let with_bsep = folder_family_color_by_name("Users\\", 0, 0);
-        assert_eq!(a, with_sep, "Users/ == Users");
-        assert_eq!(a, with_bsep, "Users\\ == Users");
+        let fwd_sep = folder_family_color_by_name("Users/", 0, 0);
+        let bck_sep = folder_family_color_by_name("Users\\", 0, 0);
+        assert_eq!(a, fwd_sep, "Users/ == Users");
+        assert_eq!(a, bck_sep, "Users\\ == Users");
     }
 
     #[test]
@@ -925,8 +931,8 @@ mod tests {
         // The shade formula darkens by depth*0.06 + index_odd*0.05.
         // So c3 (depth 3, index 7) should be darker than c1 (depth 0, index 0).
         // Both should be in the blue family though.
-        let r1 = ((c1 >> 16) & 0xFF) as u32;
-        let r3 = ((c3 >> 16) & 0xFF) as u32;
+        let r1 = (c1 >> 16) & 0xFF;
+        let r3 = (c3 >> 16) & 0xFF;
         assert!(r3 <= r1, "deeper depth darkens the shade");
     }
 

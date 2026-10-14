@@ -138,7 +138,7 @@ pub struct VerifiedFile {
     /// pass finished). `0` when the platform layer couldn't resolve
     /// it (file vanished between the scan and now, or the host has no
     /// `GetFileInformationByHandle`-class API); the caller treats `0`
-    /// as "unknown" and falls back to the node_id as the file index.
+    /// as "unknown" and falls back to the `node_id` as the file index.
     pub volume_serial: u64,
     /// File index from the same handle (folded with the high part on
     /// FAT/exFAT inside the platform layer). `u64::from(node_id)` is
@@ -419,6 +419,14 @@ struct ScreenBucket {
     members: Vec<usize>,
 }
 
+/// One verified member: `(candidate index, volume_serial, file_index)`.
+/// The hardlink identity is captured from the member's already-open
+/// `File` handle inside `verify_bucket` so the caller never re-opens.
+pub(super) type VerifiedTriple = (usize, u64, u64);
+
+/// A flat list of verified triples — one `Vec` per verified group.
+pub(super) type VerifiedGroupTriples = Vec<VerifiedTriple>;
+
 /// Verify one screen bucket: stream every member's unverified range
 /// in lockstep rounds, partitioning by chain digest after each
 /// round. Returns the verified groups (≥ 2 members, range-equal)
@@ -448,7 +456,7 @@ fn verify_bucket(
     cfg: &EngineConfig,
     sink: &dyn ProgressSink,
     hardlink: &(dyn Fn(&std::fs::File) -> Option<(u64, u64)> + Send + Sync),
-) -> Result<Vec<Vec<(usize, u64, u64)>>, EngineError> {
+) -> Result<Vec<VerifiedGroupTriples>, EngineError> {
     debug_assert!(bucket.members.len() >= 2);
     let size = bucket.size;
     let (start, end) = verify_range(size, cfg);
@@ -474,7 +482,7 @@ fn verify_bucket(
         });
     }
 
-    let mut groups: Vec<Vec<(usize, u64, u64)>> = Vec::new();
+    let mut groups: Vec<VerifiedGroupTriples> = Vec::new();
     'rounds: loop {
         if sink.cancelled() {
             return Err(EngineError::Cancelled);
@@ -756,7 +764,7 @@ pub fn run(
         .sum();
     sink.phase(PHASE_VERIFY, verify_files, verify_bytes);
 
-    let verified: Vec<Vec<Vec<(usize, u64, u64)>>> = verify_pool.install(|| {
+    let verified: Vec<Vec<VerifiedGroupTriples>> = verify_pool.install(|| {
         verify_buckets
             .par_iter()
             .map(|bucket| verify_bucket(bucket, candidates, cfg, sink, hardlink))
@@ -1263,7 +1271,7 @@ mod tests {
     }
 
     /// The hardlink closure IS called during verify and captures
-    /// (volume_serial, file_index) from each verified member's
+    /// `(volume_serial, file_index)` from each verified member's
     /// already-open File handle. This is the perf fix that collapses
     /// the v2 third-open (10k files × 20ms Defender scan = 200s saved).
     #[test]
@@ -1327,9 +1335,9 @@ mod tests {
         }
     }
 
-    /// Tiny files (size ≤ prefix_len) skip verify_bucket entirely
+    /// Tiny files (size ≤ `prefix_len`) skip `verify_bucket` entirely
     /// (the prefix screen hashed the full content). They leave with
-    /// volume_serial=0 and file_index=node_id — the caller's signal
+    /// `volume_serial=0` and `file_index=node_id` — the caller's signal
     /// to do the legacy one-open for hardlink identity.
     #[test]
     fn tiny_files_leave_zero_volume_serial_for_caller_fallback() {
