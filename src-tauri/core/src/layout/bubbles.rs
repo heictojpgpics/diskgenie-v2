@@ -159,12 +159,15 @@ fn emit(
     if drawn_r < MIN_R {
         return;
     }
+    // Family color is now name-based, resolved inside `node_color` from
+    // `branch_root` + `b.id`. The legacy `top_index` is no longer used
+    // for coloring; it's kept for shade variation (passed as the index).
     let rgb = match color {
         ColorMode::ByFolder => {
-            node_color(tree, b.id, color, now, top_index, depth as u16, top_index)
+            node_color(tree, b.id, color, now, branch_root, depth as u16, top_index)
         }
         ColorMode::ByType => tree.dominant_category(b.id).color(),
-        ColorMode::ByAge => node_color(tree, b.id, color, now, 0, 0, top_index),
+        ColorMode::ByAge => node_color(tree, b.id, color, now, branch_root, 0, top_index),
     };
     // Primary tier: the root/chain containers and the effective top-level
     // branches (soft fill); deeper descendants are the nested tier.

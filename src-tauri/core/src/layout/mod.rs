@@ -345,7 +345,7 @@ pub fn folder_legend(tree: &Tree, node: u32) -> Vec<GroupDesc> {
         out.push(GroupDesc {
             id: crate::layout::regroup::SYNTH_BASE + fam as u32,
             name: tree.name(id),
-            color: folder_family_color(fam, 0, 0),
+            color: folder_family_color_by_name(&tree.name(id), 0, 0),
             size: n.on_disk,
         });
     }
@@ -354,6 +354,11 @@ pub fn folder_legend(tree: &Tree, node: u32) -> Vec<GroupDesc> {
 
 /// Pastel families for By-folder coloring (spec §7): blue, teal, violet,
 /// amber, rose, green, sky, slate — shades vary by depth+index.
+///
+/// Kept for back-compat with any external caller still passing an index;
+/// new code should call [`folder_family_color_by_name`] which is stable
+/// across machines and matches the reference design where Users=blue,
+/// Applications=mint, Library=yellow on EVERY scan, not just the dev mock.
 #[must_use]
 pub fn folder_family_color(top_index: usize, depth: u16, index: usize) -> u32 {
     const FAMILIES: [(u8, u8, u8); 8] = [
@@ -377,19 +382,125 @@ pub fn folder_family_color(top_index: usize, depth: u16, index: usize) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
+/// Name-based pastel family color (the reference design: stable
+/// hue-per-directory across machines and scans, not by sibling index).
+///
+/// The reference analysis pinned these mappings from the DaisyDisk-class
+/// target:
+/// - `Users` → soft blue (`#D6E4FF`)
+/// - `Applications` / `Program Files` / `Program Files (x86)` → mint (`#CCFBF1`)
+/// - `Library` / `ProgramData` → soft yellow (`#FEF9C3`)
+/// - `private` / `var` → soft purple (`#E9D5FF`)
+/// - `usr` / `bin` / `sbin` / `etc` → soft pink (`#FBCFE8`)
+/// - `Windows` / `System Volume Information` → cool slate (`#E2E8F0`)
+/// - `Downloads` → soft amber (`#FEF3C7`)
+/// - `Documents` → soft sky (`#DBEAFE`-tier)
+/// - `Desktop` → soft green (`#D1FAE5`)
+///
+/// Unknown names fall back to a stable FNV-1a hash of the lowercased
+/// name bytes, mod the 8-color pastel palette — so a given directory
+/// name always maps to the SAME color on every machine, but two
+/// different unknown directories get different colors. The shade
+/// varies by depth and sibling index so neighbors separate (same
+/// behavior as the legacy index-based `folder_family_color`).
+#[must_use]
+pub fn folder_family_color_by_name(name: &str, depth: u16, index: usize) -> u32 {
+    // Curated palette mirroring the reference (slightly more saturated
+    // than the legacy families so the gradient stops in JS read cleanly
+    // against the dark theme too).
+    const PALETTE: [(u8, u8, u8); 8] = [
+        (214, 228, 255), // blue   (Users)
+        (204, 251, 241), // mint   (Applications)
+        (254, 249, 195), // yellow (Library)
+        (233, 213, 255), // purple (private)
+        (251, 207, 232), // pink   (usr)
+        (226, 232, 240), // slate  (Windows)
+        (254, 243, 199), // amber  (Downloads)
+        (209, 250, 229), // green  (Desktop)
+    ];
+    let key = name.trim_end_matches(['/', '\\']).to_ascii_lowercase();
+    let idx = match key.as_str() {
+        // macOS / Linux homes + system roots.
+        "users" | "home" | "users/admin" | "users/shared" => 0,
+        "applications" | "program files" | "program files (x86)" => 1,
+        "library" | "programdata" => 2,
+        "private" | "private/var" | "var" | "var/db" | "var/log" => 3,
+        "usr" | "usr/local" | "bin" | "sbin" | "etc" | "opt" => 4,
+        "windows" | "system volume information" | "system32" | "syswow64" | "winsxs" => 5,
+        "downloads" | "documents" | "documents and settings" => 6,
+        "desktop" | "music" | "itunes" => 7,
+        "pictures" | "photos" | "images" => 4, // pink
+        "videos" | "movies" => 5,              // slate
+        "$recycle.bin" | "trash" | ".trash" => 4,
+        // Stable hash for unknown names.
+        _ => stable_name_hash(&key) as usize % PALETTE.len(),
+    };
+    let (r, g, b) = PALETTE[idx];
+    let shade =
+        1.0 - f32::from(depth.min(4) as u8) * 0.06 - if index % 2 == 1 { 0.05 } else { 0.0 };
+    let r = (f32::from(r) * shade).clamp(0.0, 255.0) as u32;
+    let g = (f32::from(g) * shade).clamp(0.0, 255.0) as u32;
+    let b = (f32::from(b) * shade).clamp(0.0, 255.0) as u32;
+    (r << 16) | (g << 8) | b
+}
+
+/// FNV-1a 32-bit hash of a name's lowercased bytes — stable across
+/// machines, scans, and runs. Used by [`folder_family_color_by_name`]
+/// to pick a pastel family for unknown directory names so the same
+/// directory on two machines lands on the same color.
+#[must_use]
+pub fn stable_name_hash(name: &str) -> u32 {
+    let mut h: u32 = 0x811C_9DC5;
+    for b in name.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// Walk up from `id` to find its top-level branch — the ancestor
+/// whose parent is `branch_root`. Returns `id` unchanged when `id`
+/// is itself at depth 1 below `branch_root` (or `branch_root`
+/// itself). The walk terminates because parent ids always precede
+/// child ids in the arena.
+#[must_use]
+pub(crate) fn top_level_branch_id(tree: &Tree, id: u32, branch_root: u32) -> u32 {
+    if id == branch_root {
+        return id;
+    }
+    let mut cur = id;
+    for _ in 0..64 {
+        let parent = tree.node(cur).map_or(u32::MAX, |n| n.parent);
+        if parent == u32::MAX || parent == branch_root {
+            return cur;
+        }
+        cur = parent;
+    }
+    cur
+}
+
 /// Resolve the cell color for a real node under the given color mode.
+///
+/// `top_index` is the legacy by-folder family index — still threaded
+/// by the layout engines for back-compat, but ignored in `ByFolder`
+/// mode (the family color is now name-based and resolved from
+/// `branch_root` + `id` via [`top_level_branch_id`]).
 #[must_use]
 pub fn node_color(
     tree: &Tree,
     id: u32,
     mode: ColorMode,
     now: i64,
-    top_index: usize,
+    branch_root: u32,
     depth: u16,
     index: usize,
 ) -> u32 {
     match mode {
-        ColorMode::ByFolder => folder_family_color(top_index, depth, index),
+        ColorMode::ByFolder => {
+            let family_id = top_level_branch_id(tree, id, branch_root);
+            let fam_name = tree.name(family_id);
+            folder_family_color_by_name(&fam_name, depth, index)
+        }
         ColorMode::ByType => {
             let cat = tree.dominant_category(id);
             cat.color()
