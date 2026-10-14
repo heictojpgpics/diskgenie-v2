@@ -49,3 +49,11 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
   * Wire-contract gate messages moved from "ACTIVATION_REQUIRED — msg" to "ACTIVATION_REQUIRED. msg" with the userFacingError regex widened to strip any separator run ([\s—\-.]*) — old and new formats both parse; mock mirrored; new-format tests added. Rust posture/error copies de-dashed in lockstep (license.rs, commands/{license,snapshots_cmd,shell,dupes}.rs, mac/apps.rs placeholder).
   * Quick-wins reason strings "X — Quick win" → "X (Quick win)" with the cleanup.ts source parser updated (legacy separator still tolerated) and TourDriver CI parity.
 - Gates after: core 182+21+16 green + clippy + fmt; mirror 46 green + clippy; tsc 0; vitest 132/132.
+
+## Milestone 3 (bubbles engine rewrite)
+
+- **Dense front-chain circle packing** replaces concentric-ring packing (both the Rust engine and the mock's JS twin, kept in exact parity): circles placed largest-first, each externally tangent to two already-placed circles, origin-distance greedy (interior gaps fill first), overlap-rejected with a 0.02px tangency-fuzz slack, golden-angle fallback for degenerate cases. Ring packing left 20-30% dead area per parent (VLM audits vs the reference: "vast unused white space; sub-bubbles clustered in the center").
+- **A centroid recentering was tried and REJECTED** (documented in-code): for a dominant child + satellites it moves the midpoint off the dominant circle and the fill-fit bisection scales the whole pack down — the "hollow parent" regression, caught by live VLM verification before commit.
+- Cost guard: front-chain runs at ≤32 siblings (O(k³) ≈ 1M flops/parent); ring packing takes the wide tails.
+- Tests: no-overlap invariant + extent-beats-ring-pack + determinism (new `front_chain_never_overlaps_and_beats_ring_density`); all existing bubble tests (nesting exactness, fill-fit rim tangency, alpha tiers) still green.
+- **Live verification** (agent-browser on the dev mock, VLM-audited): Age Map heatmap renders with visible cells/labels/pale base/busiest ring; sunburst fat rings confirmed; bubbles before/after comparison: improved density, dominant circle larger and centered, 314 → 412 visible cells.

@@ -509,12 +509,16 @@ export function buildLayout(
     const rootR = Math.min(width, height) / 2 - 2; // core root_r
     const BUBBLE_PAD = 3; // core PAD: parent rim to content
     const BUBBLE_MIN_R = 1; // core MIN_R: sub-pixel bubbles skipped
-    // Rust-engine parity: ring packing with a bisection fill-fit (the
-    // old heuristic single-ring placement left loose gaps and mismatched
-    // production). Children of a node with usable radius U get
-    // r = sqrt(share)·U, are ring-packed largest-first, then uniformly
-    // scaled by the largest factor whose pack still fits U — sibling
-    // ratios stay exact and the pack lands tangent to the rim.
+    // Rust-engine parity: dense front-chain packing (tangent-pair
+    // placement, origin-distance greedy) with a
+    // bisection fill-fit. The old ring packing left 20-30% dead area per
+    // parent in dev while production shows the same — both engines now
+    // pack the advance-front way (core bubbles.rs `front_chain_pack`).
+    // Children of a node with usable radius U get r = sqrt(share)·U,
+    // are packed largest-first, then uniformly scaled by the largest
+    // factor whose pack still fits U — sibling ratios stay exact and
+    // the pack lands tangent to the rim.
+    const FRONT_CHAIN_MAX = 32; // core parity: O(k³) guard for wide fan-outs
     const packFit = (
       sizes: number[],
       usable: number,
@@ -525,43 +529,123 @@ export function buildLayout(
         .map((r, i) => ({ i, x: 0, y: 0, r, base: r }))
         .filter((k) => k.r >= BUBBLE_MIN_R);
       if (!ks.length) return [];
-      const pack = (arr: typeof ks): number => {
+      // The two centers at distance a.r+r from A and b.r+r from B
+      // (externally tangent to both) — the two-circle intersection.
+      const tangentCenters = (
+        a: { x: number; y: number; r: number },
+        b: { x: number; y: number; r: number },
+        r: number,
+      ): Array<[number, number]> => {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= Number.EPSILON) return [];
+        const d = Math.sqrt(d2);
+        const da = a.r + r;
+        const db = b.r + r;
+        if (d >= da + db || d <= Math.abs(da - db)) return [];
+        const p = (da * da - db * db + d2) / (2 * d);
+        const h = Math.sqrt(Math.max(0, da * da - p * p));
+        const ux = dx / d;
+        const uy = dy / d;
+        const fx = a.x + p * ux;
+        const fy = a.y + p * uy;
+        return [
+          [fx - h * uy, fy + h * ux],
+          [fx + h * uy, fy - h * ux],
+        ];
+      };
+      const extentOf = (arr: typeof ks, upto: number): number => {
+        let m = 0;
+        for (let q = 0; q < upto; q++) {
+          m = Math.max(m, Math.hypot(arr[q].x, arr[q].y) + arr[q].r);
+        }
+        return m;
+      };
+      const EPS = 0.02; // core parity: tangency float-fuzz slack
+      const frontChain = (arr: typeof ks): void => {
         arr.sort((a, b) => b.r - a.r);
-        let placed = 0;
-        let ringR = 0;
-        const GAP = 2;
-        while (placed < arr.length) {
-          const r1 = arr[placed].r;
-          const ringCenterR = ringR === 0 ? 0 : ringR + r1;
-          if (ringCenterR <= 0) {
-            arr[placed].x = 0;
-            arr[placed].y = 0;
-            ringR = r1;
-            placed += 1;
-            continue;
+        arr[0].x = 0;
+        arr[0].y = 0;
+        if (arr.length === 1) return;
+        arr[1].x = arr[0].r + arr[1].r;
+        arr[1].y = 0;
+        for (let k = 2; k < arr.length; k++) {
+          const r = arr[k].r;
+          let best: [number, number, number] | null = null;
+          for (let i = 0; i < k; i++) {
+            for (let j = i + 1; j < k; j++) {
+              for (const [cx, cy] of tangentCenters(arr[i], arr[j], r)) {
+                let overlaps = false;
+                for (let q = 0; q < k; q++) {
+                  const min = arr[q].r + r;
+                  const dx = cx - arr[q].x;
+                  const dy = cy - arr[q].y;
+                  if (dx * dx + dy * dy < (min - EPS) * (min - EPS)) {
+                    overlaps = true;
+                    break;
+                  }
+                }
+                if (overlaps) continue;
+                // Origin-distance greedy: interior gaps fill first, then
+                // the tightest rim position (core parity).
+                const score = Math.hypot(cx, cy) + r;
+                if (best === null || score < best[2]) best = [cx, cy, score];
+              }
+            }
           }
-          let count = 1;
-          let angleUsed = 0;
-          let j = placed + 1;
-          while (j < arr.length) {
-            const r2 = arr[j].r;
-            const half = (r1 + r2 + GAP) / 2;
-            const ratio = Math.min(1, half / ringCenterR);
-            const theta = ratio >= 1 ? Math.PI : 2 * Math.asin(ratio);
-            if (angleUsed + theta > Math.PI * 2) break;
-            angleUsed += theta;
-            count += 1;
-            j += 1;
+          if (best) {
+            arr[k].x = best[0];
+            arr[k].y = best[1];
+          } else {
+            const ext = extentOf(arr, k);
+            const ang = k * 2.399963;
+            arr[k].x = (ext + r) * Math.cos(ang);
+            arr[k].y = (ext + r) * Math.sin(ang);
           }
-          const step = (Math.PI * 2) / count;
-          let angle = 0;
-          for (const k of arr.slice(placed, placed + count)) {
-            k.x = ringCenterR * Math.cos(angle);
-            k.y = ringCenterR * Math.sin(angle);
-            angle += step;
+        }
+      };
+      const pack = (arr: typeof ks): number => {
+        if (arr.length <= FRONT_CHAIN_MAX) {
+          frontChain(arr);
+        } else {
+          arr.sort((a, b) => b.r - a.r);
+          let placed = 0;
+          let ringR = 0;
+          const GAP = 2;
+          while (placed < arr.length) {
+            const r1 = arr[placed].r;
+            const ringCenterR = ringR === 0 ? 0 : ringR + r1;
+            if (ringCenterR <= 0) {
+              arr[placed].x = 0;
+              arr[placed].y = 0;
+              ringR = r1;
+              placed += 1;
+              continue;
+            }
+            let count = 1;
+            let angleUsed = 0;
+            let j = placed + 1;
+            while (j < arr.length) {
+              const r2 = arr[j].r;
+              const half = (r1 + r2 + GAP) / 2;
+              const ratio = Math.min(1, half / ringCenterR);
+              const theta = ratio >= 1 ? Math.PI : 2 * Math.asin(ratio);
+              if (angleUsed + theta > Math.PI * 2) break;
+              angleUsed += theta;
+              count += 1;
+              j += 1;
+            }
+            const step = (Math.PI * 2) / count;
+            let angle = 0;
+            for (const k of arr.slice(placed, placed + count)) {
+              k.x = ringCenterR * Math.cos(angle);
+              k.y = ringCenterR * Math.sin(angle);
+              angle += step;
+            }
+            ringR = ringCenterR + arr[placed].r;
+            placed += count;
           }
-          ringR = ringCenterR + arr[placed].r;
-          placed += count;
         }
         return arr.reduce((m, k) => Math.max(m, Math.hypot(k.x, k.y) + k.r), 0);
       };
