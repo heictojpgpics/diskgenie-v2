@@ -39,6 +39,21 @@ impl Emitter for AppHandle {
     }
 }
 
+/// The IPC response wrapper (`tauri::ipc::Response::new(Vec<u8>)` — the
+/// layout command returns framed binary).
+pub mod ipc {
+    /// Bytes-carrying response (shape parity; never inspected in the mirror).
+    pub struct Response(pub Vec<u8>);
+
+    impl Response {
+        /// Wrap a byte buffer.
+        #[must_use]
+        pub fn new(bytes: Vec<u8>) -> Self {
+            Self(bytes)
+        }
+    }
+}
+
 /// The blocking-task spawner (quick_wins / find_duplicates pipelines).
 pub mod async_runtime {
     /// Runs `f` and wraps its output in the join-result shape the

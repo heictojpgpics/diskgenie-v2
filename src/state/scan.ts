@@ -415,6 +415,12 @@ export const useScanStore = create<ScanStore>((set, get) => ({
           if (useApplicationsStore.getState().apps !== null) {
             void useApplicationsStore.getState().load(true);
           }
+          // Surgery reuses arena ids for surviving nodes, so the hover
+          // chip's id-keyed size/share cache would keep quoting the
+          // pre-commit numbers for ancestors of anything deleted (the
+          // layout decode cache is generation-keyed and re-keys itself;
+          // hover details were the one id-keyed cache left).
+          invalidateHoverCache();
         }
       });
       const un2 = await listen<ScanDoneEvent>("scan-done", (e) => {

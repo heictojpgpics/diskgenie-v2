@@ -150,12 +150,22 @@ struct Shared<P: Platform> {
     /// Resolved spec §4 apps roots (compared when directories are
     /// enqueued, case-insensitively).
     apps_roots: Vec<String>,
+    /// Worker population (bounds per-push wakeups in process_job).
+    worker_count: usize,
 }
 
 /// How long idle workers sleep between cancel re-checks (they cannot be
 /// woken by the canceller directly across the trait seam; 50 ms keeps
 /// shutdown latency low and costs nothing while scanning).
 const IDLE_RECHECK: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Hard worker cap. Directory enumeration is I/O-bound: past ~16
+/// workers the single job-stack mutex and the per-batch tree lock see
+/// more contention than the extra parallelism returns (disktree's
+/// measured 3.4M-file Windows walk: 6.5 s at 16 threads vs 8.1 s at
+/// 24 — the reference project caps its walk pool for exactly this
+/// reason). Also bounds per-thread enumeration-buffer memory.
+const MAX_WORKERS: usize = 16;
 
 /// The scan outcome.
 #[derive(Debug)]
@@ -188,7 +198,9 @@ pub fn scan<P: Platform>(
     let initial = initial_jobs(&mut tree, target);
     let apps_roots = resolved_apps_roots(platform.as_ref());
 
-    let workers = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
+    let workers = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .min(MAX_WORKERS);
     let shared = Arc::new(Shared {
         platform,
         state: Mutex::new((initial, 0)),
@@ -198,6 +210,7 @@ pub fn scan<P: Platform>(
         progress: Arc::clone(progress),
         winsxs_seen: Mutex::new(HashSet::new()),
         apps_roots,
+        worker_count: workers,
     });
 
     let mut handles = Vec::with_capacity(workers);
@@ -387,11 +400,18 @@ fn worker_loop<P: Platform>(shared: &Shared<P>, cancel: &AtomicBool) {
         {
             let mut g = shared.state.lock();
             g.1 -= 1;
-            // Children were pushed by process_job under the same lock:
-            // when this was the last active worker and nothing remains,
-            // the notify_all below wakes everyone to exit.
+            // Children were pushed by process_job under the same lock with
+            // one notify per pushed job, so sleepers are already racing to
+            // the stack. Wake EVERYONE only for the termination broadcast:
+            // "stack empty && nobody active" is the one state every sleeper
+            // must observe to exit. (The old unconditional notify_all woke
+            // all workers after EVERY directory — pure futex + mutex
+            // contention on many-core hosts.)
+            if g.0.is_empty() && g.1 == 0 {
+                drop(g);
+                shared.idle.notify_all();
+            }
         }
-        shared.idle.notify_all();
     }
 }
 
@@ -486,11 +506,6 @@ fn process_job<P: Platform>(shared: &Shared<P>, job: &Job) {
             node.set_in_apps_root(true);
         }
 
-        entries.push(BatchEntry {
-            name: e.name.clone(),
-            node,
-        });
-
         if e.is_dir {
             stats.1 += 1;
         } else {
@@ -498,27 +513,42 @@ fn process_job<P: Platform>(shared: &Shared<P>, job: &Job) {
             stats.2 += e.logical;
         }
 
-        if descend {
+        // Child job construction happens BEFORE the entry push so `e.name`
+        // can be MOVED into the batch (one name allocation per file, not
+        // two — a million-file scan saves a million Vec clones). The
+        // display name is converted exactly once and reused for both the
+        // display path and the verbatim path (the old code converted the
+        // same UTF-16 name twice per child directory).
+        let entry_index = entries.len() as u32;
+        let child = if descend {
+            let name_utf8 = String::from_utf16_lossy(&e.name);
             let mut child_display = job.display.clone();
             if !child_display.ends_with('\\') {
                 child_display.push('\\');
             }
-            child_display.push_str(&String::from_utf16_lossy(&e.name));
+            child_display.push_str(&name_utf8);
             // Verbatim paths are NOT normalized by the OS: a drive-root
             // job path ends with `\` already, so the separator is added
             // only when missing (a doubled `\\` would be invalid).
             let child_path = if job.path.ends_with('\\') {
-                format!("{}{}", job.path, String::from_utf16_lossy(&e.name))
+                format!("{}{}", job.path, name_utf8)
             } else {
-                format!(r"{}\{}", job.path, String::from_utf16_lossy(&e.name))
+                format!(r"{}\{}", job.path, name_utf8)
             };
             let child_ctx =
                 ctx_for_child(&job.ctx, &ctx, &e.name, &child_display, &shared.apps_roots);
+            Some((child_ctx, child_path, child_display))
+        } else {
+            None
+        };
+
+        entries.push(BatchEntry { name: e.name, node });
+
+        if let Some((child_ctx, child_path, child_display)) = child {
             // The id this child will receive: its entry was pushed above,
-            // so the batch position is entries.len()-1. Files preceding
-            // directories shift positions — indexing the `children` vec
-            // instead (the old bug) attached every subtree to a sibling.
-            let entry_index = (entries.len() - 1) as u32;
+            // so the batch position is entries.len()-1 (files preceding
+            // directories shift positions — indexing a stale len attached
+            // every subtree to a sibling; pinned by tests).
             children.push((entry_index, child_ctx, child_path, child_display));
         }
     }
@@ -548,10 +578,19 @@ fn process_job<P: Platform>(shared: &Shared<P>, job: &Job) {
         p.bytes += stats.2;
     }
 
-    // Push child jobs (LIFO).
+    // Push child jobs (LIFO). One notify per pushed job (bounded by the
+    // worker count — a notify with no sleeper is a no-op): each woken
+    // worker pops one job; workers already active drain the stack on
+    // their next loop, so the pipeline never starves. Notifying under
+    // the state mutex keeps the predicate check + futex handshake
+    // atomic (no lost wakeup window).
     if !new_jobs.is_empty() {
         let mut g = shared.state.lock();
         g.0.extend(new_jobs);
+        let wakers = g.0.len().min(shared.worker_count);
+        for _ in 0..wakers {
+            shared.idle.notify_one();
+        }
     }
 }
 
@@ -834,6 +873,111 @@ mod tests {
         assert_eq!(tree.roots.len(), 2);
         assert_eq!(tree.node_path(1), "C:\\");
         assert_eq!(tree.node_path(2), "D:\\");
+    }
+
+    #[test]
+    fn wake_one_protocol_terminates_on_every_shape() {
+        // Guard for the notify-discipline change: wakeups are now
+        // per-pushed-job (notify_one under the state lock) plus the
+        // termination broadcast (notify_all when the stack empties and
+        // the last worker goes idle). Every tree shape must still reach
+        // "stack empty && nobody active" — a missed wakeup would hang
+        // this test forever (the 50 ms IDLE_RECHECK is the self-heal, so
+        // a hang means a protocol bug, not a slow wakeup).
+        fn dir_name(name: String) -> (&'static str, u64, u64) {
+            (Box::leak(name.into_boxed_str()), 0, 0)
+        }
+        fn file_row(name: &str, logical: u64, on_disk: u64) -> (&'static str, u64, u64) {
+            (Box::leak(name.to_string().into_boxed_str()), logical, on_disk)
+        }
+        for shape in 0..6 {
+            let mut fs = TestFs::new();
+            match shape {
+                // Single directory, no children.
+                0 => {
+                    fs.add(r"\\?\C:", vec![file_row("only.txt", 1, 1)]);
+                }
+                // Wide fan-out: 120 directories in the root, each with one
+                // file (one worker pushes 120 jobs + 120 notify_ones).
+                1 => {
+                    let children: Vec<(&str, u64, u64)> =
+                        (0..120).map(|i| dir_name(format!("d{i}\\"))).collect();
+                    fs.add(r"\\?\C:", children);
+                    for i in 0..120 {
+                        fs.add(&format!(r"\\?\C:\d{i}"), vec![file_row("f.bin", 10, 10)]);
+                    }
+                }
+                // Deep chain: 40 levels, one child each (the LIFO stack
+                // never grows past 1 — the classic lost-wakeup trap).
+                2 => {
+                    fs.add(r"\\?\C:", vec![dir_name("l0\\".to_string())]);
+                    for i in 0..40 {
+                        let parent = if i == 0 {
+                            r"\\?\C:".to_string()
+                        } else {
+                            format!(r"\\?\C:\l{}", i - 1)
+                        };
+                        fs.add(&parent, vec![dir_name(format!("l{i}\\"))]);
+                    }
+                    fs.add(r"\\?\C:\l39", vec![file_row("deep.bin", 7, 7)]);
+                }
+                // Mixed: fan-out then chains then leaves.
+                3 => {
+                    fs.add(
+                        r"\\?\C:",
+                        vec![
+                            dir_name("a\\".to_string()),
+                            dir_name("b\\".to_string()),
+                            dir_name("c\\".to_string()),
+                        ],
+                    );
+                    for b in ["a", "b", "c"] {
+                        let kids: Vec<(&str, u64, u64)> =
+                            (0..30).map(|i| dir_name(format!("{b}{i}\\"))).collect();
+                        fs.add(&format!(r"\\?\C:\{b}"), kids);
+                        for i in 0..30 {
+                            fs.add(
+                                &format!(r"\\?\C:\{b}\{b}{i}"),
+                                vec![file_row("leaf.txt", 3, 3)],
+                            );
+                        }
+                    }
+                }
+                // Empty directories only (immediate empty listings).
+                4 => {
+                    let kids: Vec<(&str, u64, u64)> =
+                        (0..50).map(|i| dir_name(format!("e{i}\\"))).collect();
+                    fs.add(r"\\?\C:", kids);
+                }
+                _ => {
+                    // Roots + nested files interleaved (files before dirs).
+                    fs.add(
+                        r"\\?\C:",
+                        vec![
+                            file_row("z_file.txt", 100, 100),
+                            dir_name("y_dir\\".to_string()),
+                            file_row("x_file.txt", 50, 50),
+                        ],
+                    );
+                    fs.add(r"\\?\C:\y_dir", vec![file_row("inner.bin", 9, 9)]);
+                }
+            }
+            let platform: Arc<TestFs> = Arc::new(fs);
+            let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+            let progress: Arc<Mutex<Progress>> = Arc::new(Mutex::new(Progress::default()));
+            let out = scan(
+                platform,
+                &ScanTarget::Drive("C:\\".into()),
+                100 + shape as u64,
+                &cancel,
+                &progress,
+            );
+            let tree = match out {
+                ScanOutcome::Done(t) => t,
+                other => panic!("shape {shape}: expected Done, got {other:?}"),
+            };
+            assert_eq!(tree.generation, 100 + shape as u64);
+        }
     }
 
     #[test]

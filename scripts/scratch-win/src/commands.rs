@@ -3,6 +3,8 @@
 
 #[path = "../../../src-tauri/src/commands/dupes.rs"]
 pub mod dupes;
+#[path = "../../../src-tauri/src/commands/layout.rs"]
+pub mod layout;
 #[path = "../../../src-tauri/src/commands/license.rs"]
 pub mod license;
 #[path = "../../../src-tauri/src/commands/scan.rs"]
@@ -15,21 +17,9 @@ pub mod snapshots_cmd;
 // The REAL commands/license.rs is #[path]-included above (session 17:
 // the async + spawn_blocking refactor). Its `require_licensed` gate is
 // exercised by the real module's own unit tests on the host.
-
-/// The layout cache stubs (`crate::commands::layout`): scan.rs's
-/// clear_all_caches calls these on every tree swap. Units — only the
-/// CALL SITES are under mirror coverage (the real caches are
-/// generation-keyed and unaffected by this session's changes).
-pub mod layout {
-    /// The real layout cache (stub shape).
-    pub struct Cache;
-    /// The real regroup cache (stub shape).
-    pub struct RegroupCache;
-    /// Real signature (clears every entry).
-    pub fn clear_cache(_cache: &Cache) {}
-    /// Real signature.
-    pub fn clear_regroup_cache(_cache: &RegroupCache) {}
-}
+// The REAL commands/layout.rs is #[path]-included above (session 20:
+// the LRU cache + `(async)` command changes compile-checked on host;
+// the scan.rs clear-cache call sites resolve against the real types).
 
 /// The explore cache stubs (`crate::commands::explore`).
 pub mod explore {
