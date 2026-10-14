@@ -565,7 +565,13 @@ fn compute_dupes(tree: &Tree, ctl: &DupesCtl, start: u32) -> Result<DupesResult,
     );
 
     // The v3 engine: screens + lockstep verification (core-side).
-    let verified = engine::run(&candidates, &engine::EngineConfig::default(), ctl)
+    // The hardlink closure lets the engine capture (volume_serial,
+    // file_index) from each verified member's ALREADY-OPEN File
+    // handle — collapsing the THIRD `File::open` per verified member
+    // that the v2 caller used to do (10k verified files × 20 ms
+    // Defender scan = 200 s saved AFTER the verify pass finishes).
+    let hardlink_resolver = |f: &std::fs::File| crate::platform::os::hardlink_identity_for_handle(f);
+    let verified = engine::run(&candidates, &engine::EngineConfig::default(), ctl, &hardlink_resolver)
         .map_err(|e| e.to_string())?;
     eprintln!(
         "[dupes] engine finished: {} verified groups at {:?}",
@@ -575,14 +581,20 @@ fn compute_dupes(tree: &Tree, ctl: &DupesCtl, start: u32) -> Result<DupesResult,
 
     // Hardlink identity per verified member + the tree facts the UI's
     // keep rules and reveal wiring need (node id + modified). The
-    // platform seam needs an open handle; verified members are the
-    // true-duplicate subset, so this opens a small fraction of the
-    // tree.
+    // engine already captured (volume_serial, file_index) from the
+    // open verify handle; only the TINY files (size ≤ prefix_len)
+    // didn't go through verify and still need the legacy open.
     let mut hashed: Vec<HashedFile> = Vec::new();
     for (class, group) in verified.iter().enumerate() {
         for f in &group.files {
-            let (vs, fi) = hardlink_identity(std::path::Path::new(&f.path))
-                .unwrap_or((u64::MAX, u64::from(f.node_id)));
+            // Verified files have (vs, fi) captured; tiny files
+            // (vs == 0) fall back to the legacy open here.
+            let (vs, fi) = if f.volume_serial == 0 {
+                hardlink_identity(std::path::Path::new(&f.path))
+                    .unwrap_or((u64::MAX, u64::from(f.node_id)))
+            } else {
+                (f.volume_serial, f.file_index)
+            };
             let modified = tree.node(f.node_id).map_or(0, |n| n.modified);
             hashed.push(HashedFile {
                 path: f.path.clone(),

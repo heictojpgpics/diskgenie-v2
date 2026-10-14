@@ -131,6 +131,19 @@ pub struct VerifiedFile {
     pub size: u64,
     /// The candidate's caller-side identity.
     pub node_id: u32,
+    /// Volume serial number captured from the already-open verify
+    /// handle (saves the THIRD `File::open` per verified member that
+    /// `compute_dupes` used to do — 10k verified files × 20 ms
+    /// Defender scan = 200 s of pure open latency AFTER the verify
+    /// pass finished). `0` when the platform layer couldn't resolve
+    /// it (file vanished between the scan and now, or the host has no
+    /// `GetFileInformationByHandle`-class API); the caller treats `0`
+    /// as "unknown" and falls back to the node_id as the file index.
+    pub volume_serial: u64,
+    /// File index from the same handle (folded with the high part on
+    /// FAT/exFAT inside the platform layer). `u64::from(node_id)` is
+    /// the honest fallback when the platform layer couldn't resolve.
+    pub file_index: u64,
 }
 
 /// A content-equal duplicate group straight from the engine.
@@ -409,7 +422,10 @@ struct ScreenBucket {
 /// Verify one screen bucket: stream every member's unverified range
 /// in lockstep rounds, partitioning by chain digest after each
 /// round. Returns the verified groups (≥ 2 members, range-equal)
-/// as candidate-index vectors.
+/// as `(candidate-index, volume_serial, file_index)` triples — the
+/// hardlink identity is captured from each member's already-open
+/// `File` handle via `hardlink`, saving the THIRD `File::open` per
+/// verified member that the v2 caller used to do.
 ///
 /// ## The round loop
 ///
@@ -431,7 +447,8 @@ fn verify_bucket(
     candidates: &[EngineCandidate],
     cfg: &EngineConfig,
     sink: &dyn ProgressSink,
-) -> Result<Vec<Vec<usize>>, EngineError> {
+    hardlink: &(dyn Fn(&std::fs::File) -> Option<(u64, u64)> + Send + Sync),
+) -> Result<Vec<Vec<(usize, u64, u64)>>, EngineError> {
     debug_assert!(bucket.members.len() >= 2);
     let size = bucket.size;
     let (start, end) = verify_range(size, cfg);
@@ -457,7 +474,7 @@ fn verify_bucket(
         });
     }
 
-    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut groups: Vec<Vec<(usize, u64, u64)>> = Vec::new();
     'rounds: loop {
         if sink.cancelled() {
             return Err(EngineError::Cancelled);
@@ -515,7 +532,18 @@ fn verify_bucket(
         for mut class in ordered {
             if class.len() >= 2 && class.iter().all(|m| m.eof) {
                 // Verified: equal chains through the whole range.
-                groups.push(class.iter().map(|m| m.idx).collect());
+                // Capture hardlink identity from each member's
+                // already-open `File` handle (the THIRD-open the
+                // v2 caller used to do is gone — 10k verified files
+                // × 20 ms Defender scan = 200 s saved on real disks).
+                let captured: Vec<(usize, u64, u64)> = class
+                    .iter()
+                    .map(|m| {
+                        let (vs, fi) = hardlink(&m.file).unwrap_or((0, m.idx as u64));
+                        (m.idx, vs, fi)
+                    })
+                    .collect();
+                groups.push(captured);
                 for m in &class {
                     sink.file_done(m.read);
                 }
@@ -570,6 +598,13 @@ fn verify_range(size: u64, cfg: &EngineConfig) -> (u64, u64) {
 /// everything downstream runs in path order (disk locality: short
 /// seeks, warm cache lines, Defender scanning neighbours).
 ///
+/// `hardlink` is called with each verified member's already-open
+/// `File` handle to capture `(volume_serial, file_index)` for hardlink
+/// exclusion downstream — this collapses the v2 third-open per
+/// verified file (the post-verify `File::open` for
+/// `GetFileInformationByHandle`). The closure is `Send + Sync` so the
+/// parallel verify pool can call it from worker threads.
+///
 /// # Errors
 /// [`EngineError::Cancelled`] when the sink reported cancellation
 /// mid-pipeline. Partial groups are discarded (a cancelled run
@@ -580,6 +615,7 @@ pub fn run(
     candidates: &[EngineCandidate],
     cfg: &EngineConfig,
     sink: &dyn ProgressSink,
+    hardlink: &(dyn Fn(&std::fs::File) -> Option<(u64, u64)> + Send + Sync),
 ) -> Result<Vec<VerifiedGroup>, EngineError> {
     // Path-sorted work order (disk locality for every pass).
     let mut order: Vec<usize> = (0..candidates.len()).collect();
@@ -669,6 +705,14 @@ pub fn run(
                             path: candidates[i].path.clone(),
                             size,
                             node_id: candidates[i].node_id,
+                            // Tiny files never went through verify_bucket,
+                            // so no open File handle was captured. The
+                            // caller (`compute_dupes`) opens these once
+                            // for hardlink identity (the legacy third-open,
+                            // but only for the small fraction of files
+                            // below the prefix length).
+                            volume_serial: 0,
+                            file_index: u64::from(candidates[i].node_id),
                         })
                         .collect(),
                 });
@@ -712,10 +756,10 @@ pub fn run(
         .sum();
     sink.phase(PHASE_VERIFY, verify_files, verify_bytes);
 
-    let verified: Vec<Vec<Vec<usize>>> = verify_pool.install(|| {
+    let verified: Vec<Vec<Vec<(usize, u64, u64)>>> = verify_pool.install(|| {
         verify_buckets
             .par_iter()
-            .map(|bucket| verify_bucket(bucket, candidates, cfg, sink))
+            .map(|bucket| verify_bucket(bucket, candidates, cfg, sink, hardlink))
             .collect::<Result<Vec<_>, _>>()
     })?;
     if sink.cancelled() {
@@ -724,13 +768,15 @@ pub fn run(
     for bucket_groups in verified {
         for member_ids in bucket_groups {
             groups.push(VerifiedGroup {
-                size: candidates[member_ids[0]].size,
+                size: candidates[member_ids[0].0].size,
                 files: member_ids
                     .iter()
-                    .map(|&i| VerifiedFile {
+                    .map(|&(i, vs, fi)| VerifiedFile {
                         path: candidates[i].path.clone(),
                         size: candidates[i].size,
                         node_id: candidates[i].node_id,
+                        volume_serial: vs,
+                        file_index: fi,
                     })
                     .collect(),
             });
@@ -743,6 +789,16 @@ pub fn run(
 // ---------------------------------------------------------------------------
 // Tests: real staged files, every planted structure, adversarial shapes.
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+/// Test no-op hardlink resolver (shared by `tests` and `bench`):
+/// returns `None` so verified members fall back to
+/// `volume_serial=0`, `file_index=idx` (the same shape the
+/// production caller treats as "unknown" and re-resolves via
+/// `hardlink_identity` for tiny files).
+fn no_hardlink() -> &'static (dyn Fn(&std::fs::File) -> Option<(u64, u64)> + Send + Sync) {
+    &|_f: &std::fs::File| None
+}
 
 #[cfg(test)]
 mod tests {
@@ -856,7 +912,7 @@ mod tests {
 
     /// Run + summarize as (size, count) sorted.
     fn run_sizes(candidates: &[EngineCandidate], cfg: &EngineConfig) -> Vec<(u64, u64)> {
-        let mut groups: Vec<(u64, u64)> = run(candidates, cfg, &QuietSink)
+        let mut groups: Vec<(u64, u64)> = run(candidates, cfg, &QuietSink, no_hardlink())
             .expect("engine")
             .into_iter()
             .map(|g| (g.size, g.files.len() as u64))
@@ -969,7 +1025,7 @@ mod tests {
         for (name, content) in [("a.png", &a), ("b.png", &a), ("c.png", &cc), ("e.png", &cc)] {
             fs::write(d.join(name), content).unwrap();
         }
-        let groups = run(&candidates_of(&d), &cfg, &QuietSink).expect("engine");
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, no_hardlink()).expect("engine");
         assert_eq!(groups.len(), 2, "expected two classes: {groups:#?}");
         assert_eq!(groups[0].files.len(), 2);
         assert_eq!(groups[1].files.len(), 2);
@@ -987,7 +1043,7 @@ mod tests {
         for i in 0..70u32 {
             fs::write(d.join(format!("copy-{i:03}.pdf")), &a).unwrap();
         }
-        let groups = run(&candidates_of(&d), &cfg, &QuietSink).expect("engine");
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, no_hardlink()).expect("engine");
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].files.len(), 70);
         assert_eq!(groups[0].size, size);
@@ -1007,7 +1063,7 @@ mod tests {
         let mut cands = candidates_of(&d);
         // Lie about one member's size (as if it shrank after scan).
         cands[1].size += 17;
-        let groups = run(&cands, &cfg, &QuietSink).expect("engine");
+        let groups = run(&cands, &cfg, &QuietSink, no_hardlink()).expect("engine");
         // The pair broke: no group (the honest pair member may not
         // pair with the stale one).
         assert!(groups.iter().all(|g| g.files.len() < 2 || g.size != size));
@@ -1026,7 +1082,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(d.join("c.bin"), fs::Permissions::from_mode(0o000)).unwrap();
         }
-        let groups = run(&candidates_of(&d), &cfg, &QuietSink).expect("engine");
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, no_hardlink()).expect("engine");
         #[cfg(unix)]
         {
             assert_eq!(groups.len(), 1);
@@ -1055,7 +1111,7 @@ mod tests {
         let a = fmt_blob(0, 0x0303, 2 * 1024);
         fs::write(d.join("a.jpg"), &a).unwrap();
         fs::write(d.join("b.jpg"), &a).unwrap();
-        let out = run(&candidates_of(&d), &cfg, &CancelSink);
+        let out = run(&candidates_of(&d), &cfg, &CancelSink, no_hardlink());
         assert_eq!(out, Err(EngineError::Cancelled));
     }
 
@@ -1063,17 +1119,17 @@ mod tests {
     fn empty_and_singleton_inputs_return_no_groups() {
         let (_t, d) = stage("empty");
         assert!(
-            run(&[], &small_cfg(), &QuietSink).unwrap().is_empty(),
+            run(&[], &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
             "empty in, empty out"
         );
         let mut cands = candidates_of(&d);
         assert!(
-            run(&cands, &small_cfg(), &QuietSink).unwrap().is_empty(),
+            run(&cands, &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
             "no same-size pair"
         );
         cands.clear();
         assert!(
-            run(&cands, &small_cfg(), &QuietSink).unwrap().is_empty(),
+            run(&cands, &small_cfg(), &QuietSink, no_hardlink()).unwrap().is_empty(),
             "no same-size pair"
         );
     }
@@ -1085,7 +1141,7 @@ mod tests {
         fs::write(d.join("z2.dat"), b"").unwrap();
         fs::write(d.join("z3.dat"), b"").unwrap();
         assert!(
-            run(&candidates_of(&d), &small_cfg(), &QuietSink)
+            run(&candidates_of(&d), &small_cfg(), &QuietSink, no_hardlink())
                 .unwrap()
                 .is_empty(),
             "zero-length never groups"
@@ -1127,7 +1183,7 @@ mod tests {
         twin[(cfg.prefix_len + 5) as usize] ^= 0xFF;
         fs::write(d.join("c.mp4"), &twin).unwrap();
         let sink = Arc::new(CountingSink::default());
-        run(&candidates_of(&d), &cfg, sink.as_ref()).unwrap();
+        run(&candidates_of(&d), &cfg, sink.as_ref(), no_hardlink()).unwrap();
         // 3 screen file_done + 3 verify file_done (a/b group, c
         // retires as a gap-differing singleton).
         assert_eq!(sink.files.load(Ordering::Relaxed), 6);
@@ -1184,7 +1240,7 @@ mod tests {
         let a = fmt_blob(6, 0x0606, 2 * 1024);
         fs::write(d.join("m.txt"), &a).unwrap();
         fs::write(d.join("n.txt"), &a).unwrap();
-        let groups = run(&candidates_of(&d), &cfg, &QuietSink).unwrap();
+        let groups = run(&candidates_of(&d), &cfg, &QuietSink, no_hardlink()).unwrap();
         assert_eq!(groups.len(), 1);
         let paths: Vec<&str> = groups[0].files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(
@@ -1217,7 +1273,7 @@ mod tests {
         }
         let cands = candidates_of(&d);
         let t0 = std::time::Instant::now();
-        let groups = run(&cands, &cfg, &QuietSink).expect("engine");
+        let groups = run(&cands, &cfg, &QuietSink, no_hardlink()).expect("engine");
         let elapsed = t0.elapsed();
         assert_eq!(groups.len(), 6);
         assert!(groups.iter().all(|g| g.files.len() == 4));
@@ -1348,7 +1404,7 @@ mod bench {
         );
 
         let t0 = std::time::Instant::now();
-        let groups = run(&cands, &cfg, &counting).unwrap();
+        let groups = run(&cands, &cfg, &counting, no_hardlink()).unwrap();
         let elapsed = t0.elapsed();
         let read = counting.bytes.load(Ordering::Relaxed);
         let mps = read as f64 / elapsed.as_secs_f64() / (mib as f64);
