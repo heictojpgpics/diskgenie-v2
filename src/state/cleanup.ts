@@ -79,7 +79,7 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
 
   stageMany: (items) => {
     if (items.length > 0) {
-      const source = items[0].reason.split(":")[0]?.split(" — ")[0] ?? "manual";
+      const source = items[0].reason.split(":")[0]?.split(" · ")[0] ?? "manual";
       track(EVENTS.cleanupStaged, {
         source,
         items: items.length,
