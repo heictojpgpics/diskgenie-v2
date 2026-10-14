@@ -19,3 +19,46 @@ pub mod shell;
 pub mod sidebar;
 pub mod snapshots_cmd;
 pub mod store_update;
+
+use std::sync::Arc as TreeArc;
+
+use diskgenie_core::scan::node::Tree;
+
+use crate::state::AppState;
+
+/// Shared stale-tree guard (the tree-only form): resolves a snapshot
+/// `Arc` (the read lock drops immediately) or errors with the exact
+/// wire strings the frontend drops by convention ("no scan yet" /
+/// "stale generation N (current M)"). The hand-inlined copies across
+/// the command modules had already drifted in comment and structure;
+/// every new command goes through these instead.
+pub(crate) fn resolve_tree(
+    state: &AppState,
+    generation: u64,
+) -> Result<TreeArc<Tree>, String> {
+    let guard = state.tree.read();
+    let Some(tree) = guard.as_ref() else {
+        return Err("no scan yet".into());
+    };
+    if tree.generation != generation {
+        return Err(format!(
+            "stale generation {} (current {})",
+            generation, tree.generation
+        ));
+    }
+    Ok(TreeArc::clone(tree))
+}
+
+/// [`resolve_tree`] + the node-exists check (the form the explore
+/// datasets use: a bad node rejects before any computation runs).
+pub(crate) fn resolve_node(
+    state: &AppState,
+    generation: u64,
+    node: u32,
+) -> Result<TreeArc<Tree>, String> {
+    let tree = resolve_tree(state, generation)?;
+    if tree.node(node).is_none() {
+        return Err(format!("node {node} not in tree"));
+    }
+    Ok(tree)
+}

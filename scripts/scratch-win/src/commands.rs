@@ -38,3 +38,46 @@ pub mod explore {
         pub fn clear(&self) {}
     }
 }
+
+/// The shared stale-tree guards (real bodies: the mirror's dupes.rs and
+/// sidebar.rs call these through `super::`, matching the real
+/// commands/mod.rs surface added in session 20).
+pub(crate) mod guard {
+    use crate::state::AppState;
+    use diskgenie_core::scan::node::Tree;
+    use std::sync::Arc as TreeArc;
+
+    /// Tree-only form: resolves a snapshot `Arc` or errors.
+    pub(crate) fn resolve_tree(state: &AppState, generation: u64) -> Result<TreeArc<Tree>, String> {
+        let guard = state.tree.read();
+        let Some(tree) = guard.as_ref() else {
+            return Err("no scan yet".into());
+        };
+        if tree.generation != generation {
+            return Err(format!(
+                "stale generation {} (current {})",
+                generation, tree.generation
+            ));
+        }
+        Ok(TreeArc::clone(tree))
+    }
+
+    /// Tree + node form (the explore datasets' guard).
+    pub(crate) fn resolve_node(
+        state: &AppState,
+        generation: u64,
+        node: u32,
+    ) -> Result<TreeArc<Tree>, String> {
+        let tree = resolve_tree(state, generation)?;
+        if tree.node(node).is_none() {
+            return Err(format!("node {node} not in tree"));
+        }
+        Ok(tree)
+    }
+}
+pub(crate) use guard::resolve_tree;
+// The real crate's explore.rs consumes this through `commands::*`; the
+// mirror does not #[path]-include explore.rs, so the re-export is
+// unused here and only here.
+#[allow(unused_imports)]
+pub(crate) use guard::resolve_node;

@@ -106,3 +106,9 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 - scan.rs 867 → 818 lines while ADDING the three documented helpers; ~120 lines of invariant code now live once. A subtle correctness ALIGNMENT fell out: the standard Done arm used to read root stats from the tree AFTER the swap (which, in a superseded-generation race, could be a NEWER scan's tree filed under OUR generation's record); complete_scan reads from the tree being swapped — the turbo arm's already-correct behavior, now uniform.
 - The stale doc comment claiming "splitting across helpers would hide the ordering invariants" updated: the helpers ARE the invariants, named and documented.
 - Gates: mirror (real scan.rs included) 46 green + clippy clean; core 183+21+16; tsc 0; vitest 132.
+
+## Milestone 6 (stale-tree guard unification)
+
+- `resolve_tree` / `resolve_node` extracted to `commands/mod.rs` (the shared wire-string contract: "no scan yet" / "stale generation N (current M)" / "node N not in tree"). Converted the same-shape sites: top_sizes, age_map (via the explore alias), dupes find_duplicates (tree-only form), sidebar quick_wins. The hold-the-guard sites (quick_win_items, shell, snapshots, layout's compute-under-lock) deliberately NOT converted — changing their lock scope is a behavior change, out of refactor bounds. ~40 lines of drift-prone duplication removed; every future command gets the guard for free.
+- Mirror parity: the guard helpers re-exported in the mirror's commands.rs (with a documented unused-import allow for the explore-only form).
+- Gates: mirror 46 + clippy clean; core 222; tsc 0; vitest 132.

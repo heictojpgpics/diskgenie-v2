@@ -362,19 +362,9 @@ pub async fn find_duplicates(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0)),
     )?;
-    let tree = {
-        let guard = state.tree.read();
-        let Some(tree) = guard.as_ref() else {
-            return Err("no scan yet".into());
-        };
-        if tree.generation != generation {
-            return Err(format!(
-                "stale generation {} (current {})",
-                generation, tree.generation
-            ));
-        }
-        Arc::clone(tree)
-    };
+    // The shared stale-tree guard (tree-only form: the scope node is
+    // resolved BELOW, after the run state is checked).
+    let tree = super::resolve_tree(&state, generation)?;
     // Resolve the scope BEFORE marking running: a bad node must
     // reject without touching the run state.
     let (start, scope_path) = resolve_scope(&tree, node)?;
