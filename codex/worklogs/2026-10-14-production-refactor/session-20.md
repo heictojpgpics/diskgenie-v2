@@ -116,3 +116,8 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 ## Milestone 7 (panic-safety hardening)
 
 - Release builds use `panic = "abort"`: one corrupted-CSR `expect()` in a layout engine would kill the whole app mid-render. All six production-path expects converted to graceful skips (treemap, sunburst, flame, mindmap per-child; bubbles' build_bubble collects defensively) — the same hardening `names_batch` already received (CI run 35707319531 in its comment). A missing node drops its cell/subtree instead of aborting; every engine's unit suites still green.
+
+## Milestone 8 (keyboard parity + regroup cap)
+
+- **FoldersMode arrow nav actually covers files now**: the comment claimed "Files below the grid extend the same linear order" while `count` was folders-only — file tiles were unreachable by keyboard (Tab + Enter only, preview three clicks deep). The combined linear order (folders + files, shared 240px column template) with section-aware onMove/onActivate (Enter opens folders, previews files) and `data-file-nav` scroll-into-view. Live-verified: drill into C:, eight ArrowDowns land the selection on a `.db-file-row`.
+- **by-age regroup member cap**: MAX_CELLS/9 (the by-type category count) under-bucketed the 6-bucket age mode by a third; now sized per mode.
