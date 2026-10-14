@@ -118,7 +118,7 @@ export function QuickWinsSection() {
           id: i.id,
           path: i.path,
           size: i.size,
-          reason: `${row.title} — Quick win`,
+          reason: `${row.title} · Quick win`,
         })),
       );
       track(EVENTS.quickWinsAddAll, { category: row.id, items: items.length });
@@ -143,7 +143,7 @@ export function QuickWinsSection() {
                 e.preventDefault();
                 setMenu({ row, x: e.clientX, y: e.clientY });
               }}
-              title={row.reviewOnly ? `${row.title} — review only` : row.title}
+              title={row.reviewOnly ? `${row.title} · review only` : row.title}
             >
               <span className={`db-quick-icon tone-${TONES[i % TONES.length]}`}>
                 <Icon size={15} />
@@ -171,7 +171,7 @@ export function QuickWinsSection() {
             role="menuitem"
             className="db-ctx-item"
             disabled={menu.row.reviewOnly}
-            title={menu.row.reviewOnly ? (menu.row.extra ?? "Review-only row — Add all is disabled") : undefined}
+            title={menu.row.reviewOnly ? (menu.row.extra ?? "Review-only row. Add all is disabled") : undefined}
             onClick={() => void addAll(menu.row)}
           >
             <CheckIcon size={14} />

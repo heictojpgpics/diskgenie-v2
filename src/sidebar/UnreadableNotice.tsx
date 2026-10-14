@@ -50,7 +50,7 @@ export function UnreadableNotice() {
     <div className="db-notice" role="status">
       <LockKeyholeIcon size={17} />
       <div title={info.samples.join("\n")}>
-        <strong>{info.count.toLocaleString()} folders couldn’t be read — sizes may be incomplete</strong>
+        <strong>{info.count.toLocaleString()} folders couldn’t be read. Sizes may be incomplete.</strong>
         <span>
           {IS_MAC
             ? "macOS denied access. Granting Full Disk Access includes privacy-protected locations."
