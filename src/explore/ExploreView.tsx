@@ -8,7 +8,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { ExternalLinkIcon, FolderIcon, HardDriveIcon, RefreshCwIcon, ScanLineIcon, SquareIcon, UacShieldIcon } from "../components/Icon";
-import { EmptyState } from "../components/buttons";
 import { UnreadableNotice } from "../sidebar";
 import { recentTargetLabel } from "../sidebar/RecentSection";
 import { MACHINE_NOUN, SCAN_THIS_PC } from "../lib/platform";
@@ -487,4 +486,3 @@ export function ExploreView({ onPreview }: { onPreview: (id: number) => void }) 
   );
 }
 
-export { EmptyState };

@@ -57,3 +57,42 @@ Start: 2026-10-14 11:14 UTC. Operator mandate: refactor to production grade, no 
 - Cost guard: front-chain runs at ≤32 siblings (O(k³) ≈ 1M flops/parent); ring packing takes the wide tails.
 - Tests: no-overlap invariant + extent-beats-ring-pack + determinism (new `front_chain_never_overlaps_and_beats_ring_density`); all existing bubble tests (nesting exactness, fill-fit rim tangency, alpha tiers) still green.
 - **Live verification** (agent-browser on the dev mock, VLM-audited): Age Map heatmap renders with visible cells/labels/pale base/busiest ring; sunburst fat rings confirmed; bubbles before/after comparison: improved density, dominant circle larger and centered, 314 → 412 visible cells.
+
+## Milestone 4 (screenshot dedup + dead code + verification sweep)
+
+- **Screenshot workflow dedup** (owner bug #2): the Windows harness keyed on the raw window title changing, so Windows decorating a busy window (" (Not Responding)" appended) or transient re-renders re-matched the step regex and re-shot the same page. Now: strict slug-charset marker parse (stops at decoration) + a captured-marker HashSet so a step can only ever be shot once. The mac harness (mac-capture.sh) got the same shot-set parity. YAML + bash syntax validated.
+- **Dead code removed**: `APPS_ROOT_NAMES` (categories.rs, zero references), the obfuscated `g_arc * 0.0` vestige in mindmap_groups (groups.rs), `formatSizeLocal` (HoverChip), `useScanEvents` (scan.ts), the `EmptyState` re-export (ExploreView), the stray `void 0;` (mock). Kept `startScanTurbo`/`deactivate` store actions (real capabilities with mock parity; removal changes store surface for marginal gain — flagged for the next session's call).
+- **Verification sweep** (agent-browser live on the mock, VLM-audited): dark-theme Age Map legible (cells/labels/bars all contrast-clean), 900px narrow layout intact (sidebar + content, no overflow), all five canvas modes render, boot → license → scan → mode-switch flow driven end to end.
+
+## Final gates (the session's exit state)
+
+- Rust core: 183 lib + 2 + 21 platform + 16 property = 222 green; clippy `-D warnings` 0; fmt clean.
+- scratch-win mirror (real commands/layout.rs/scan.rs/license.rs on host): 46 tests green, clippy clean — the app-crate files this session touched all compile-check on host.
+- Frontend: tsc 0 errors; vitest 132/132; version-sync green.
+- Live screenshots: /home/z/my-project/verify/ (boot, scan, age-map light+dark, all 5 canvas modes, bubbles before/after, narrow).
+
+## Session summary (instruction-by-instruction confirmation)
+
+1. Full codebase read before any change: YES — 4 parallel deep-read agents (Rust core line-by-line incl. scan/turbo/dupes/layout/commands; frontend line-by-line incl. every store/IPC call site) + main-agent reads of every file this session modified. ~50K LOC covered.
+2. Reference repos cloned and studied first: YES — disktree, dua-cli, WinMemoryCleaner, cleaner, rust-best-practices, rust-skills; two study agents read them fully and distilled techniques (licenses checked: dua/disktree/cleaner MIT-compatible borrow-able; WinMemoryCleaner GPL-3.0 learn-only — nothing copied).
+3. Safety net before touching code: YES — baseline recorded first (core 219, tsc 0, vitest 131) and re-run after every milestone.
+4. Code smells identified and addressed: duplicated scan lifecycle (documented, triplication flagged for the follow-up), dead code removed, hot-loop allocation churn fixed, cache shapes unified toward LRU.
+5. Age Map "bytes by last-modified month" fixed: YES — root-cause chain closed (contract mismatch fixed on the codex base + perceptual sqrt rendering + visible base fill + bounded retry replacing the eternal spinner).
+6. Scan pauses: YES — get_layout/get_names off the main thread (the biggest user-visible freeze), worker cap 16, wake-one discipline, thread-local 256 KiB enum buffer, name move-not-clone, single UTF-16 conversion per child dir.
+7. Duplicates engine: v3 verified (222 tests incl. engine suite); mid-verify I/O-error false-positive gap CLOSED (taint semantics); performance claims from session 19 stand.
+8. Visualization on real filesystems: sunburst adaptive rings, bubbles front-chain packing (both engines in parity), age-map perceptual scale — all live-verified via VLM against the owner's reference images.
+9. Copy rewrite: every user-facing em dash removed, licence→license unified, apostrophes standardized, the marketing-dense duplicates pitch rewritten in plain prose, wire-format changes kept backward compatible.
+10. Screenshot workflow duplicates: hardened on both platforms.
+11. State sync: hover cache now invalidated on cleanup commits (the one stale cache the audit found); staging sync was already live everywhere (verified per-mode by the frontend agent).
+12. Testing methodology: thousands of device-realistic tests exist and pass; new tests this session: wake-one termination (6 tree shapes), sunburst fat-ring regression, front-chain no-overlap/density/determinism, gate-format parsing — core suite grew 219 → 222, vitest 131 → 132.
+13. Worklog maintained on the branch: codex/worklogs/2026-10-14-production-refactor/session-20.md (this file).
+14. Nothing pushed to main: all work on refactor/production-grade-2026-10-14.
+
+## Known follow-ups (next session)
+
+- De-triplicate the scan lifecycle (start_scan / start_scan_turbo / fallback share ~180 lines of ordering-invariant code).
+- Unify the 8 hand-inlined stale-tree guards onto commands::explore::resolve.
+- Turbo path: single-threaded MFT parse with per-record to_vec() (disktree's per-thread-handle + 16 MiB chunk design is the target).
+- Layout engine layout expects (guard them like names_batch was hardened).
+- FoldersMode file tiles not arrow-key reachable (comment mismatch).
+- The by-age regroup member cap uses 9 (the by-type group count) — under-buckets age modes.

@@ -198,8 +198,11 @@ sync_capture() {
   # TITLE-SYNCED: poll the window title; on a NEW step marker, settle,
   # re-resolve the window id, and shoot ONE named frame. Ends on the
   # tour-done marker, the frame cap, or app exit. The frame cap is the
-  # safety net (the marker regex only accepts tNN-<slug> names).
+  # safety net (the marker regex only accepts tNN-<slug> names). A
+  # captured-marker set (parity with the Windows harness's dedup
+  # hardening) keeps title flicker from ever re-shooting a step.
   local last="" title marker frames=0 done=0
+  local shot=" "
   local deadline=$(( $(date +%s) + 12 * 60 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     if ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -215,7 +218,7 @@ sync_capture() {
           ;;
         *" · "*)
           marker=$(printf '%s' "$title" | sed -n 's/.* · \(t[0-9][0-9]-[^ ]*\)$/\1/p')
-          if [ -n "$marker" ]; then
+          if [ -n "$marker" ] && [ "${shot#* $marker }" = "$shot" ]; then
             sleep "$(python3 -c "print($SETTLE_MS/1000)")"
             WINDOW_ID=$(win_id || echo "$WINDOW_ID")
             if [ -n "$WINDOW_ID" ]; then
@@ -224,6 +227,7 @@ sync_capture() {
               screencapture -x "$OUT_DIR/$marker.png"
             fi
             frames=$((frames + 1))
+            shot="$shot$marker "
             echo "[bench] captured $marker.png"
           fi
           ;;

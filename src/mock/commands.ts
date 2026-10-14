@@ -79,7 +79,6 @@ function cacheKey(target: string): string {
   }
   return `${target.replace(/[\\/]+$/, "").toLowerCase()}\\`;
 }
-void 0;
 
 const fmtPath = (id: number): string => tree.pathOf(id);
 

@@ -562,7 +562,6 @@ pub fn mindmap_groups(
     ));
     if total > 0 && r_max > 8.0 {
         let ring_r = r_max * 0.55; // groups ring; members sit further out
-        let g_arc = std::f32::consts::TAU / groups.len().max(1) as f32;
         let mut cursor = -std::f32::consts::FRAC_PI_2;
         for g in groups {
             if over_budget(&cells, &mut truncated) {
@@ -591,8 +590,7 @@ pub fn mindmap_groups(
                     cells.push(Cell::dot(*mid, 2, rgba, mx, my, MIND_MIN_R, gx, gy));
                 }
             }
-            cursor += span.max(g_arc * 0.0) + 0.0; // spans are exact ∝ size
-            let _ = g_arc;
+            cursor += span; // spans are exact ∝ size
         }
     }
     Ok(LayoutBuffer {

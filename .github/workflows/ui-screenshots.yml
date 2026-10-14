@@ -182,25 +182,40 @@ jobs:
           # the window title (`DiskGenie · tNN-name`); poll it and shoot
           # exactly ONE named frame per step — no duplicates, no misses,
           # "one for one page/mode/action".
+          # DEDUP HARDENING: the previous loop keyed on the raw title
+          # changing, so Windows decorating a busy window (" (Not
+          # Responding)" appended) or a transient re-render re-matched the
+          # step regex and re-shot the same page under near-identical
+          # names — the duplicate-frames symptom. The loop now (1) parses
+          # the marker with a strict slug charset that stops at any
+          # decoration, and (2) keeps a captured-marker set so a step can
+          # only ever be shot once, no matter how the title flickers.
           $deadline = (Get-Date).AddMinutes(12)
           $lastTitle = ''
           $frames = 0
           $sawMarker = $false
+          $shot = New-Object 'System.Collections.Generic.HashSet[string]'
           while ((Get-Date) -lt $deadline -and -not $app.HasExited) {
             $t = WindowTitle
             if ($t -and $t -ne $lastTitle) {
               if ($t -match '· tour-done') { "tour finished after $frames frames"; break }
-              if ($t -match '· (t\d{2}-.+)$') {
-                # Settle: let the view-transition crossfade + the debounced
-                # canvas repaint land before the frame.
-                Start-Sleep -Milliseconds 1300
-                if ($app.HasExited) { break }
-                Shoot(($Matches[1] + '.png'))
-                $frames++
-                $sawMarker = $true
-                "captured $($Matches[1])"
+              if ($t -match '· (t\d{2}-[a-z0-9-]+)') {
+                $marker = $Matches[1]
+                if (-not $shot.Contains($marker)) {
+                  # Settle: let the view-transition crossfade + the
+                  # debounced canvas repaint land before the frame.
+                  Start-Sleep -Milliseconds 1300
+                  if ($app.HasExited) { break }
+                  Shoot(($marker + '.png'))
+                  $null = $shot.Add($marker)
+                  $frames++
+                  $sawMarker = $true
+                  "captured $marker"
+                }
               } elseif (-not $sawMarker) {
-                # Pre-tour boot frame (the window before step 0).
+                # Pre-tour boot frame (the window before step 0); the
+                # name is constant so boot-time title flicker overwrites
+                # at most itself, never duplicates.
                 Shoot('t00-boot.png'); $frames++
                 "captured t00-boot (pre-tour)"
               }

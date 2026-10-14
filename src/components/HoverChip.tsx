@@ -25,18 +25,6 @@ export interface HoverChipData {
   isProtected: boolean;
 }
 
-export function formatSizeLocal(bytes: number): string {
-  // Local twin to avoid importing the store in this leaf component.
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = bytes;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v >= 100 || u === 0 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
-}
-
 /** Shared placement: 16/18 px offset from the pointer, clamped so the
  * chip never leaves the viewport (both the first show and every move
  * — the old show() placed at the RAW pointer, undoing the clamp). */
