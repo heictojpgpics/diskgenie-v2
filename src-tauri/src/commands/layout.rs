@@ -351,9 +351,15 @@ fn regrouped_for(tree: &Tree, req: &LayoutRequest, cache: &RegroupCache) -> Arc<
         return Arc::clone(hit);
     }
     let now = now_unix();
-    // Per-group member budget: 9 categories / 6 buckets max, MAX_CELLS
-    // total headroom before engine truncation.
-    let member_cap = MAX_CELLS / 9;
+    // Per-group member budget, sized by the mode's ACTUAL group count
+    // (9 by-type categories, 6 by-age buckets) so each mode gets its
+    // full share of the MAX_CELLS headroom: the old flat MAX_CELLS/9
+    // under-bucketed by-age members by a third (2222 vs 3333 slots).
+    let member_cap = match req.color {
+        ColorMode::ByType => MAX_CELLS / 9,
+        ColorMode::ByAge => MAX_CELLS / 6,
+        ColorMode::ByFolder => unreachable!("guarded by the caller"),
+    };
     let data = match req.color {
         ColorMode::ByType => regroup::by_type(tree, req.node, member_cap),
         ColorMode::ByAge => regroup::by_age(tree, req.node, now, member_cap),
