@@ -230,7 +230,7 @@ export function CleanupQueuePopover({
                     icon: "trash",
                   }
                 : {
-                    text: `Moved ${moved.toLocaleString()} item${moved === 1 ? "" : "s"} · ${bytes(freed)} to the ${BIN_NAME} — empty it to free the space.`,
+                    text: `Moved ${moved.toLocaleString()} item${moved === 1 ? "" : "s"} · ${bytes(freed)} to the ${BIN_NAME}. Empty it to free the space.`,
                     icon: "trash",
                   },
           }),
@@ -272,8 +272,8 @@ export function CleanupQueuePopover({
                 disabled={items.length === 0 || committing || scanRunning}
                 title={
                   scanRunning
-                    ? "Wait for the scan to finish — cleaning needs a settled map"
-                    : "Delete immediately — nothing goes to the Recycle Bin"
+                    ? "Wait for the scan to finish. Cleaning needs a settled map"
+                    : "Delete immediately. Nothing goes to the Recycle Bin"
                 }
                 onClick={() => setConfirming("permanent")}
               >
@@ -286,7 +286,7 @@ export function CleanupQueuePopover({
                 disabled={items.length === 0 || committing || scanRunning}
                 title={
                   scanRunning
-                    ? "Wait for the scan to finish — cleaning needs a settled map"
+                    ? "Wait for the scan to finish. Cleaning needs a settled map"
                     : undefined
                 }
                 onClick={() => setConfirming("recycle")}
@@ -304,7 +304,7 @@ export function CleanupQueuePopover({
                   <ul>
                     {failure.failed.slice(0, 8).map((f) => (
                       <li key={f.path} title={f.path}>
-                        {f.reason} — {f.path}
+                        {f.reason} · {f.path}
                       </li>
                     ))}
                   </ul>
@@ -323,7 +323,7 @@ export function CleanupQueuePopover({
                 <span className="db-pop-empty-icon">
                   <Trash2Icon size={24} />
                 </span>
-                <p>Nothing staged yet — pick folders or files you want gone, then commit them in one move.</p>
+                <p>Nothing staged yet. Pick folders or files you want gone, then commit them in one move.</p>
               </div>
             ) : (
               <div className="db-pop-list db-scroll">
@@ -393,8 +393,8 @@ export function CleanupQueuePopover({
                 <p>
                   {items.length.toLocaleString()} item{items.length === 1 ? "" : "s"} · {bytes(total)} of data.{" "}
                   {IS_MAC
-                    ? "These items are deleted immediately — nothing goes to the Trash, and this can't be undone."
-                    : "These items are deleted immediately — nothing goes to the Recycle Bin, and this can't be undone."}
+                    ? "These items are deleted immediately. Nothing goes to the Trash, and this can't be undone."
+                    : "These items are deleted immediately. Nothing goes to the Recycle Bin, and this can't be undone."}
                 </p>
                 <div className="db-dialog-actions">
                   <button type="button" className="db-outline auto" onClick={() => setConfirming(null)}>

@@ -272,7 +272,7 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         )}
         {complete && !error && (
-          <div className="db-license-msg ok">Key looks complete — you're ready to activate.</div>
+          <div className="db-license-msg ok">Key looks complete. You’re ready to activate.</div>
         )}
         <div className="db-license-perks">
           <div>
