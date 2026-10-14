@@ -44,6 +44,7 @@ pub fn bucket_of(modified: i64, now: i64) -> usize {
 
 /// "How old are these bytes?" — on-disk bytes per bucket for a subtree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgeBuckets {
     /// Bytes per bucket (6 slots, on-disk sizes).
     pub bytes: [u64; 6],
@@ -66,7 +67,15 @@ pub fn bucket_totals(tree: &Tree, id: u32, now: i64) -> AgeBuckets {
 }
 
 /// "Bytes by last-modified month" — year × month heatmap (spec §7).
+///
+/// `rename_all = "camelCase"` is load-bearing: the TS twin in
+/// `src/viz/exploreIpc.ts` types these fields as `firstYear` /
+/// `lastYear`. Without it, serde emits `snake_case` keys, the JS reads
+/// `undefined`, the year loop never iterates, and the heatmap renders
+/// blank on the real backend (the mock escaped this because it builds
+/// the object in JS with camelCase directly).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MonthHeatmap {
     /// First year present (e.g. 2019).
     pub first_year: i32,
@@ -76,7 +85,9 @@ pub struct MonthHeatmap {
     pub bytes: Vec<u64>,
     /// Max cell value (legend "more" end).
     pub max: u64,
-    /// `(year, month)` of the busiest month.
+    /// `(year, zero-based month)` of the busiest month.  This is an IPC-facing
+    /// value: month indexes must agree with `bytes` and JavaScript's
+    /// `Date#getUTCMonth` (January = 0), not civil-date month numbers.
     pub busiest: Option<(i32, usize)>,
 }
 
@@ -145,7 +156,10 @@ pub fn month_heatmap(tree: &Tree, id: u32) -> MonthHeatmap {
         bytes[idx] = v;
         if v > max {
             max = v;
-            busiest = Some((y, m));
+            // `year_month` deliberately returns a civil month (1..=12), but
+            // `bytes` and the UI address columns with a zero-based index.
+            // Keep the entire heatmap DTO on that one convention.
+            busiest = Some((y, m - 1));
         }
     }
     MonthHeatmap {
@@ -160,6 +174,7 @@ pub fn month_heatmap(tree: &Tree, id: u32) -> MonthHeatmap {
 /// "Big & Untouched" — files ≥ 40 MB not modified in over a year
 /// (spec §7), ranked largest-first, capped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BigFile {
     /// Node id.
     pub id: u32,
@@ -291,7 +306,7 @@ mod tests {
         assert_eq!(h.bytes.len(), 12);
         assert_eq!(h.bytes[8], 10); // September = index 8
         assert_eq!(h.max, 10);
-        assert_eq!(h.busiest, Some((2026, 9)));
+        assert_eq!(h.busiest, Some((2026, 8))); // September, zero-based
     }
 
     #[test]
@@ -322,7 +337,7 @@ mod tests {
         assert_eq!(h.bytes[idx_2024_09], 7);
         assert_eq!(h.bytes[idx_2026_09], 150); // 100 + 50 accumulated
         assert_eq!(h.max, 150);
-        assert_eq!(h.busiest, Some((2026, 9)));
+        assert_eq!(h.busiest, Some((2026, 8))); // September, zero-based
     }
 
     #[test]
@@ -345,5 +360,35 @@ mod tests {
             name: name.encode_utf16().collect(),
             node,
         }
+    }
+
+    /// Regression for the "Age Map renders blank on the real backend"
+    /// defect: `MonthHeatmap` MUST serialize with `camelCase` field
+    /// names because `src/viz/exploreIpc.ts` types it as
+    /// `firstYear` / `lastYear`. Without `#[serde(rename_all =
+    /// "camelCase")]`, serde emits `first_year` / `last_year`, the JS
+    /// reads `undefined`, and the year loop `for (let y =
+    /// heat.firstYear; y <= heat.lastYear; y++)` never iterates —
+    /// the heatmap renders nothing. The mock escaped this because
+    /// it builds the object in pure JS with the camelCase keys
+    /// directly.
+    #[test]
+    fn month_heatmap_serializes_camel_case_for_frontend() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\");
+        t.append_batch(0, vec![file("only", 10, 1_790_000_000)]);
+        let h = month_heatmap(&t, 0);
+        let json = serde_json::to_string(&h).expect("serialize");
+        // camelCase keys MUST appear (not snake_case).
+        assert!(
+            json.contains("\"firstYear\""),
+            "expected camelCase firstYear, got: {json}"
+        );
+        assert!(
+            json.contains("\"lastYear\""),
+            "expected camelCase lastYear, got: {json}"
+        );
+        assert!(!json.contains("first_year"), "snake_case leaked: {json}");
+        assert!(!json.contains("last_year"), "snake_case leaked: {json}");
     }
 }

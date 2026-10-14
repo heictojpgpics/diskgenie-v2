@@ -54,7 +54,7 @@ const PRO_SIM = {
 };
 /** The Rust gate marker (require_licensed) — the ipc layer
  * intercepts it and opens the activation flow. */
-const GATE_MSG = "ACTIVATION_REQUIRED — Activate DiskGenie Pro to use this.";
+const GATE_MSG = "ACTIVATION_REQUIRED. Activate DiskGenie Pro to use this.";
 function licenseGate(): void {
   const p = String(license.posture);
   if (p === "pro" || p === "grace") return;
@@ -79,7 +79,6 @@ function cacheKey(target: string): string {
   }
   return `${target.replace(/[\\/]+$/, "").toLowerCase()}\\`;
 }
-void 0;
 
 const fmtPath = (id: number): string => tree.pathOf(id);
 
@@ -892,10 +891,12 @@ export const commands: Record<string, Cmd> = {
       const n = tree.nodes[d];
       if (n.isDir) continue;
       const b = ageBucketOf(n.modified, now);
-      buckets[b] += n.logical;
+      // Mirror the real engine: age analysis is allocated-byte based, so
+      // sparse/compressed files have the same proportions in mock and Tauri.
+      buckets[b] += n.onDisk;
       const dt = new Date(n.modified * 1000);
       const key = `${dt.getUTCFullYear()}-${dt.getUTCMonth()}`;
-      monthMap.set(key, (monthMap.get(key) ?? 0) + n.logical);
+      monthMap.set(key, (monthMap.get(key) ?? 0) + n.onDisk);
       if (n.logical >= 40 * MB && now - n.modified > 365 * DAY && !n.cloud) {
         big.push({ id: d, name: n.name, path: fmtPath(d), logical: n.logical, onDisk: n.onDisk, modified: n.modified, protected: n.protected });
       }
@@ -1019,7 +1020,7 @@ export const commands: Record<string, Cmd> = {
           return;
         }
         if (!n.isDir) {
-          reject("Duplicates scans a folder — select a folder.");
+          reject("Duplicates scans a folder. Select one to scope it.");
           return;
         }
         scopePath = fmtPath(node);

@@ -48,11 +48,24 @@ export function AgeMapMode(props: AgeMapModeProps) {
     // already had the honest pattern: say the scan changed and wait.
     setStale(false);
     void (async () => {
-      try {
-        const d = await getAgeMap(props.generation, props.folder);
-        if (!disposed) setData(d);
-      } catch {
-        if (!disposed) setStale(true);
+      // Bounded retries: a generation swap can race the fetch (the tree
+      // moves between render and invoke). The old code gave up on the
+      // FIRST stale error and spun "reloading…" forever — on real
+      // machines that read as "the month chart never shows anything".
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const d = await getAgeMap(props.generation, props.folder);
+          if (!disposed) setData(d);
+          return;
+        } catch (e) {
+          if (disposed) return;
+          const stale = String(e).includes("stale generation");
+          if (!stale || attempt === 2) {
+            setStale(true);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+        }
       }
     })();
     return () => {
@@ -68,7 +81,7 @@ export function AgeMapMode(props: AgeMapModeProps) {
     return (
       <div className="db-loading-block" role="status">
         <Spinner />
-        <span>{stale ? "Scan changed — reloading…" : "Bucketing by age…"}</span>
+        <span>{stale ? "Scan changed. Reloading…" : "Bucketing by age…"}</span>
       </div>
     );
   }
@@ -136,18 +149,23 @@ export function AgeMapMode(props: AgeMapModeProps) {
             {Array.from({ length: 12 }, (_, mi) => {
               const idx = (y - heat.firstYear) * 12 + mi;
               const v = heat.bytes[idx] ?? 0;
-              const frac = heat.max > 0 ? v / heat.max : 0;
+              // Perceptual (Weber-Fechner) scale: real drives spread bytes
+              // across 30+ years, so a linear fraction renders all but the
+              // single busiest month as a blank grid. The square root keeps
+              // the ordering and the max cell identical while making the
+              // long tail visible — the reference screen's look.
+              const frac = heat.max > 0 ? Math.sqrt(v / heat.max) : 0;
               const isBusiest = busiest && busiest[0] === y && busiest[1] === mi;
               // Reference treatment: significant months carry their size
               // IN the cell (darker fill + border) so the heavy months read
-              // without hovering.
-              const labeled = frac >= 0.3 && v > 0;
+              // without hovering. sqrt(0.22) ≈ 5% of the busiest month.
+              const labeled = frac >= 0.22 && v > 0;
               return (
                 <i
                   key={mi}
                   className={`${isBusiest ? "busiest" : ""} ${labeled ? "labeled" : ""}`}
-                  style={{ ["--heat" as string]: Math.max(0.08, frac).toFixed(2) }}
-                  title={`${MONTH_NAMES[mi]} ${y} — ${bytes(v)}`}
+                  style={{ ["--heat" as string]: frac.toFixed(3) }}
+                  title={`${MONTH_NAMES[mi]} ${y}: ${bytes(v)}`}
                 >
                   {labeled && <b className="tnum">{bytes(v)}</b>}
                 </i>
@@ -158,10 +176,12 @@ export function AgeMapMode(props: AgeMapModeProps) {
         <div className="heat-legend">
           <span>less</span>
           <span className="db-heat-scale">
-            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 15%, var(--track))" }} />
-            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 40%, var(--track))" }} />
-            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 70%, var(--track))" }} />
-            <i style={{ background: "var(--pastel-blue)" }} />
+            {/* Swatches mirror the cell formula (12% + sqrt-frac × 76%) so the
+             * legend is the scale, not a decorative ramp. */}
+            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 31%, var(--track))" }} />
+            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 50%, var(--track))" }} />
+            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 69%, var(--track))" }} />
+            <i style={{ background: "color-mix(in oklab, var(--pastel-blue) 88%, var(--track))" }} />
           </span>
           <span>more</span>
         </div>
@@ -212,7 +232,7 @@ export function AgeMapMode(props: AgeMapModeProps) {
                   type="button"
                   className={`db-stage-toggle ${staged ? "staged" : ""}`}
                   aria-label={staged ? `Unstage ${row.name}` : `Stage ${row.name}`}
-                  title={staged ? "Staged — click to unstage" : "Stage for cleanup"}
+                  title={staged ? "Staged. Click to unstage" : "Stage for cleanup"}
                   disabled={row.protected}
                   onClick={(e) => {
                     e.stopPropagation();

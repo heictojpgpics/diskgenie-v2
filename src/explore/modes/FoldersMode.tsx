@@ -87,22 +87,43 @@ export function FoldersMode(props: FoldersModeProps) {
 
   // Explorer-parity grid navigation: arrows move between cards (↑/↓ by
   // column, ←/→ by one), Enter opens. Files below the grid extend the
-  // same linear order.
+  // SAME linear order (folderCount + fileCount items; the file rows
+  // share the 240px-min column template, so the measured `cols` applies
+  // to both sections) — the comment used to claim this; now it's true.
   const folderCount = data?.folders.length ?? 0;
+  const fileCount = data?.files.length ?? 0;
   useArrowNav({
-    count: folderCount,
+    count: folderCount + fileCount,
     selectedId: props.selectedId,
-    idOf: (i) => (data?.folders[i]?.id ?? -1),
+    idOf: (i) =>
+      i < folderCount
+        ? (data?.folders[i]?.id ?? -1)
+        : (data?.files[i - folderCount]?.id ?? -1),
     grid: { columns: () => cols },
     onMove: (i) => {
-      const f = data?.folders[i];
-      if (!f) return;
-      props.onSelect(f.id);
-      virtualizer.scrollToIndex(Math.floor(i / cols), { align: "auto" });
+      if (i < folderCount) {
+        const f = data?.folders[i];
+        if (!f) return;
+        props.onSelect(f.id);
+        virtualizer.scrollToIndex(Math.floor(i / cols), { align: "auto" });
+      } else {
+        const f = data?.files[i - folderCount];
+        if (!f) return;
+        props.onSelect(f.id);
+        document
+          .querySelector(`[data-file-nav="${f.id}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      }
     },
     onActivate: (i) => {
-      const f = data?.folders[i];
-      if (f) props.onOpen(f.id);
+      if (i < folderCount) {
+        const f = data?.folders[i];
+        if (f) props.onOpen(f.id);
+      } else {
+        // Enter on a file previews it (the row's own key handler parity).
+        const f = data?.files[i - folderCount];
+        if (f) props.onPreview(f.id);
+      }
     },
   });
 
@@ -128,7 +149,7 @@ export function FoldersMode(props: FoldersModeProps) {
             ))}
           </div>
           <div className="db-loading-block" role="status">
-            <span>{stale ? "Scan changed — reloading…" : "Loading folders…"}</span>
+            <span>{stale ? "Scan changed. Reloading…" : "Loading folders…"}</span>
           </div>
         </div>
       </div>
@@ -244,6 +265,7 @@ export function FoldersMode(props: FoldersModeProps) {
                 <button
                   key={f.id}
                   type="button"
+                  data-file-nav={f.id}
                   className={`db-file-row ${props.selectedId === f.id ? "is-selected" : ""}`}
                   style={{ ["--file-cat" as string]: `#${f.categoryColor.toString(16).padStart(6, "0")}` }}
                   onClick={() => props.onSelect(f.id)}
@@ -269,7 +291,7 @@ export function FoldersMode(props: FoldersModeProps) {
                       {f.cloud ? " · cloud" : ""}
                     </small>
                   </span>
-                  <b className="tnum">{f.cloud ? "—" : bytes(f.size)}</b>
+                  <b className="tnum">{f.cloud ? "n/a" : bytes(f.size)}</b>
                 </button>
               );
             })}
@@ -277,7 +299,7 @@ export function FoldersMode(props: FoldersModeProps) {
         )}
         {data.filesCapped && (
           <div className="db-files-more">
-            Showing the first {data.files.length} files — refine the filter to see more.
+            Showing the first {data.files.length} files. Refine the filter to see more.
           </div>
         )}
       </div>

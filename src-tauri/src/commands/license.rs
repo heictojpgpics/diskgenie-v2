@@ -516,10 +516,10 @@ pub fn require_licensed(mgr: &LicenseManager, now: i64) -> Result<(), String> {
     match license::posture(&state, now) {
         LicensePosture::Pro | LicensePosture::Grace { .. } => Ok(()),
         LicensePosture::Degraded => Err(format!(
-            "{GATE_STALE} — DiskGenie couldn't verify your license for over {GRACE_DAYS} days. Reconnect to restore Pro features."
+            "{GATE_STALE}. DiskGenie couldn't verify your license for over {GRACE_DAYS} days. Reconnect to restore Pro features."
         )),
         LicensePosture::Unlicensed => Err(format!(
-            "{GATE_ACTIVATION_REQUIRED} — Activate DiskGenie Pro to use this."
+            "{GATE_ACTIVATION_REQUIRED}. Activate DiskGenie Pro to use this."
         )),
     }
 }

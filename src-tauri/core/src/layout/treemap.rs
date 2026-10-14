@@ -140,7 +140,12 @@ fn layout_children(
         if crate::layout::over_budget(cells, truncated) {
             return;
         }
-        let node = tree.node(id).expect("id from children slice");
+        // Graceful skip (not expect): a corrupted CSR must never abort
+        // the app (release builds panic=abort); an unreadable cell is
+        // dropped honestly — the same hardening names_batch received.
+        let Some(node) = tree.node(id) else {
+            continue;
+        };
         if node.is_removed() {
             continue;
         }

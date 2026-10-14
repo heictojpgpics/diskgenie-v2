@@ -94,7 +94,7 @@ export function TopSizesMode(props: TopSizesModeProps) {
         </div>
         <span className="db-shown tnum">{rows.length} shown</span>
       </div>
-      {!data && stale && <div className="db-substate">Scan changed — reloading…</div>}
+      {!data && stale && <div className="db-substate">Scan changed. Reloading…</div>}
       {!data && !stale && <SkeletonRows rows={10} className="db-ranked-skeleton" />}
       {data && rows.length === 0 && (
         <div className="db-substate">{props.filter ? `Nothing matches “${props.filter}”.` : "Nothing to rank yet."}</div>

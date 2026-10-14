@@ -126,7 +126,7 @@ pub fn take_snapshot(
         Some(id) => {
             let n = tree.node(id).ok_or_else(|| format!("unknown node {id}"))?;
             if !n.is_dir() {
-                return Err("Snapshots capture a folder's footprint — select a folder.".into());
+                return Err("Snapshots capture a folder's footprint. Select one first.".into());
             }
             id
         }

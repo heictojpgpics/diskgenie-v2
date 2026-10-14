@@ -4,7 +4,6 @@
  * stats from `scan-done`. Requests and results are generation-tagged;
  * stale ticks drop (spec §9 IPC rule).
  */
-import { useEffect } from "react";
 import { create } from "zustand";
 import { invoke } from "../lib/ipc";
 import { EVENTS, track } from "../lib/analytics";
@@ -415,6 +414,12 @@ export const useScanStore = create<ScanStore>((set, get) => ({
           if (useApplicationsStore.getState().apps !== null) {
             void useApplicationsStore.getState().load(true);
           }
+          // Surgery reuses arena ids for surviving nodes, so the hover
+          // chip's id-keyed size/share cache would keep quoting the
+          // pre-commit numbers for ancestors of anything deleted (the
+          // layout decode cache is generation-keyed and re-keys itself;
+          // hover details were the one id-keyed cache left).
+          invalidateHoverCache();
         }
       });
       const un2 = await listen<ScanDoneEvent>("scan-done", (e) => {
@@ -436,15 +441,3 @@ export const useScanStore = create<ScanStore>((set, get) => ({
   },
 }));
 
-/** Mount this once where scan events matter; it cleans up on unmount
- *  (StrictMode double-invocation is handled by the attach-once guard +
- *  the unlisten list living outside React state). */
-export function useScanEvents() {
-  useEffect(() => {
-    useScanStore.getState().ensureListeners();
-    return () => {
-      // Keep listeners attached across StrictMode remounts; the app is
-      // a single window — they detach when it closes.
-    };
-  }, []);
-}

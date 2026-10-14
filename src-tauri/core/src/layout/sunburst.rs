@@ -7,8 +7,8 @@
 
 use crate::error::CoreError;
 use crate::layout::{
-    check_geometry, effective_branch_root, node_color, pack_rgba, Cell, ColorMode, LayoutBuffer,
-    LayoutMeta,
+    check_geometry, effective_branch_root, node_color, pack_rgba, reachable_levels, Cell,
+    ColorMode, LayoutBuffer, LayoutMeta,
 };
 use crate::scan::node::Tree;
 
@@ -43,8 +43,15 @@ pub fn sunburst(
     let cy = height / 2.0;
     let r_max = width.min(height) / 2.0 - 4.0;
     let r_center = r_max * CENTER_R_FRACTION;
-    let ring_w = if depth > 0 {
-        (r_max - r_center - RING_GAP * depth as f32) / depth as f32
+    // ADAPTIVE ring count: rings = reachable depth, bounded by the depth
+    // setting (the same contract flame rows and mind-map rings already
+    // enforce via reachable_levels/spread_rings). Dividing by the
+    // REQUESTED depth reserved 10 paper-thin rings for a 3-level tree —
+    // real folders rendered mostly-empty hairline rings (the owner's
+    // "sunburst is a little weak on real systems").
+    let levels = reachable_levels(tree, node, depth);
+    let ring_w = if levels > 0 {
+        (r_max - r_center - RING_GAP * levels as f32) / levels as f32
     } else {
         0.0
     };
@@ -145,7 +152,11 @@ fn layout_ring(
         if crate::layout::over_budget(cells, truncated) {
             return;
         }
-        let c = tree.node(id).expect("child id");
+        // Graceful skip (not expect): release builds panic=abort; a
+        // corrupted CSR drops the cell instead of killing the app.
+        let Some(c) = tree.node(id) else {
+            continue;
+        };
         if c.is_removed() || c.on_disk == 0 {
             continue;
         }
@@ -404,5 +415,54 @@ mod tests {
                 c.g[1]
             );
         }
+    }
+
+    /// Adaptive ring budget (the requested-depth paper-thin-ring bug): a
+    /// 2-level tree under a depth-8 request must lay out 2 fat rings that
+    /// fill the radial budget, not 8 hairlines. The deepest emitted cell
+    /// must reach (nearly) `r_max`, and no cell may exceed it.
+    #[test]
+    fn shallow_tree_gets_fat_adaptive_rings() {
+        // build() is 2 levels deep (root children + their files).
+        let t = build();
+        let buf = sunburst(&t, 0, 800.0, 800.0, 8, ColorMode::ByFolder, 1).unwrap();
+        let r_max = 800.0 / 2.0 - 4.0;
+        let arcs: Vec<&Cell> = buf
+            .cells
+            .iter()
+            .filter(|c| c.flags == crate::layout::cell_kind::ARC)
+            .collect();
+        let max_depth = arcs.iter().map(|c| c.depth).max().unwrap_or(0);
+        assert_eq!(
+            max_depth, 2,
+            "2-level tree must emit exactly 2 ring levels (got {max_depth})"
+        );
+        let outermost_r1 = arcs
+            .iter()
+            .filter(|c| c.depth == max_depth)
+            .map(|c| c.g[3])
+            .fold(0.0_f32, f32::max);
+        assert!(
+            outermost_r1 >= r_max - 2.0,
+            "fat rings must fill the radial budget: outer r1 {outermost_r1} vs r_max {r_max}"
+        );
+        for c in &arcs {
+            assert!(c.g[3] <= r_max + 0.001, "cell r1 exceeds r_max: {}", c.g[3]);
+        }
+        // And the ring width is the fat one: (r_max - r_center - 2 gaps)/2,
+        // comfortably wider than the depth-8 hairline division.
+        let r_center = r_max * CENTER_R_FRACTION;
+        let fat_w = (r_max - r_center - RING_GAP * 2.0) / 2.0;
+        let hairline_w = (r_max - r_center - RING_GAP * 8.0) / 8.0;
+        let observed = arcs
+            .iter()
+            .filter(|c| c.depth == 1)
+            .map(|c| c.g[3] - c.g[2])
+            .next()
+            .unwrap_or(0.0);
+        assert!(
+            (observed - fat_w).abs() < 0.5,
+            "ring width must be the adaptive fat width ({fat_w}), got {observed} (hairline would be {hairline_w})"
+        );
     }
 }

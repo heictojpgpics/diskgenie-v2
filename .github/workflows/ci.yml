@@ -87,6 +87,7 @@ jobs:
         run: npm run typecheck
 
       - name: "Gate: vitest"
+        shell: bash
         run: npx vitest run --passWithNoNotes 2>/dev/null || npx vitest run --passWithNoTests
 
       - name: "Gate: version sync (web ↔ Tauri ↔ Cargo)"

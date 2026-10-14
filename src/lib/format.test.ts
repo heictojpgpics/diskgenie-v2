@@ -60,7 +60,7 @@ describe("percent", () => {
 describe("relativeAge", () => {
   const now = 1_800_000_000;
   it("unknown timestamps render as an em dash", () => {
-    expect(relativeAge(0, now)).toBe("—");
+    expect(relativeAge(0, now)).toBe("n/a");
   });
   it("bucketizes the same as the Rust twin", () => {
     expect(relativeAge(now - 5, now)).toBe("Just now");

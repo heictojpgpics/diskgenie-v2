@@ -107,7 +107,7 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
           </span>
           <h3>Inspector</h3>
           <p>
-            Select any folder or file — the map, the list, or the tree — and its size, largest
+            Select any folder or file in the map, the list, or the tree, and its size, largest
             items and cleanup actions live here.
           </p>
           <div className="db-inspector-hints">
@@ -224,7 +224,7 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
         </div>
         <div className="db-detail">
           <span>Created</span>
-          <b>{details.created > 0 ? relativeAge(details.created, now) : "—"}</b>
+          <b>{details.created > 0 ? relativeAge(details.created, now) : "Unknown"}</b>
         </div>
       </section>
 
@@ -263,7 +263,7 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
           disabled={!details.isDir || dupesRunning}
           title={
             !details.isDir
-              ? "Duplicates scans a folder — select a folder to scope it"
+              ? "Duplicates scans a folder. Select one to scope it"
               : dupesRunning
                 ? "A duplicates scan is already running"
                 : isVirtualRoot
@@ -306,9 +306,9 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
           details.isProtected
             ? `${SYSTEM_OWNER} manages this item`
             : isVirtualRoot
-              ? `${ROOT_VIEW_LABEL} is a view of all drives — open a drive or folder, then stage what you want to clean`
+              ? `${ROOT_VIEW_LABEL} is a view of all drives. Open a drive or folder, then stage what you want to clean`
               : staged
-                ? "Staged — click to unstage"
+                ? "Staged. Click to unstage"
                 : "Add to the Cleanup Queue"
         }
         onClick={doStage}
@@ -324,7 +324,7 @@ export function InspectorPanel({ onPreview }: { onPreview: (id: number) => void 
       </button>
       {details.isProtected && (
         <div className="db-cloud-note" style={{ marginTop: 8 }}>
-          <LockKeyholeIcon size={12} /> {SYSTEM_OWNER} manages this item — it can’t be staged.
+          <LockKeyholeIcon size={12} /> {SYSTEM_OWNER} manages this item, so it can’t be staged.
         </div>
       )}
     </aside>

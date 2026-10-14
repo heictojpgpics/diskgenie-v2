@@ -59,7 +59,7 @@ export function ApplicationsView() {
         <EmptyState
           icon={<AppWindowIcon size={28} />}
           title="Applications"
-          body={status === "scanning" ? "Scan in progress — app footprints land here after the tree is ready." : "Every installed app, its leftovers, and one-click cleanup."}
+          body={status === "scanning" ? "Scan in progress. App footprints land here after the tree is ready." : "Every installed app, its leftovers, and one-click cleanup."}
           action={
             status !== "scanning" ? (
               <button type="button" className="db-ink-button auto" onClick={() => void startScan("ThisPC")}>
@@ -95,7 +95,7 @@ export function ApplicationsView() {
 
   const stageLeftovers = (app: AppEntry) => {
     const items = app.leftovers.flatMap((g) =>
-      g.paths.map((p) => ({ id: 0, path: p.path, size: p.size, reason: `Leftovers: ${app.name} — ${g.label}` })),
+      g.paths.map((p) => ({ id: 0, path: p.path, size: p.size, reason: `Leftovers: ${app.name} (${g.label})` })),
     );
     if (items.length > 0) stageMany(items);
     setConfirm(null);
@@ -175,8 +175,8 @@ export function ApplicationsView() {
               <div>
                 <strong>{app.name}</strong>
                 <div className="db-app-meta">
-                  <em>{app.publisher || "—"}</em>
-                  <span>v{app.version || "—"}</span>
+                  <em>{app.publisher || "Unknown"}</em>
+                  <span>{app.version ? `v${app.version}` : "Unknown"}</span>
                   {app.leftovers.length > 0 && (
                     <span className="db-leftover-count">+{app.leftovers.length} leftovers</span>
                   )}
@@ -235,7 +235,7 @@ export function ApplicationsView() {
       })}
 
       {!busy && sorted.length === 0 && (
-        <EmptyState icon={<PackageOpenIcon size={28} />} title="No applications found" body="Registry and Store enumeration found nothing — try Refresh." />
+        <EmptyState icon={<PackageOpenIcon size={28} />} title="No applications found" body="Registry and Store enumeration found nothing. Try Refresh." />
       )}
 
       {confirm && (
@@ -285,7 +285,7 @@ export function ApplicationsView() {
             </div>
 
             <p>
-              Runs the app’s own uninstaller — registry and installer state stay intact; program
+              Runs the app’s own uninstaller. Registry and installer state stay intact; program
               files are never trashed directly. Leftover data can be staged for review afterwards.
             </p>
 

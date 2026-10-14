@@ -7,7 +7,7 @@
 //! `[u32 meta_len LE][meta JSON bytes][cells binary 32 B each]`.
 //! Cells: `id u32 | depth u16 | flags u16 | rgba u32 | 5×f32 geometry`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use diskgenie_core::layout::regroup::{self, Regrouped};
@@ -61,7 +61,13 @@ pub enum LayoutMode {
 }
 
 /// Cache key = the full request (doc 03 M4.1).
-pub type Cache = Mutex<HashMap<LayoutRequest, Arc<Vec<u8>>>>;
+pub type Cache = Mutex<LruCache<LayoutRequest, Arc<Vec<u8>>>>;
+
+/// Layout-cache entry budget. Keys are EXACT `width×height`: a resize drag
+/// produces one cold key per pixel step, so the bound exists to keep a
+/// drag's memory flat (insertion-order eviction is enough — stale sizes
+/// are one-shot, never re-requested).
+const LAYOUT_CACHE_CAP: usize = 64;
 
 /// Regrouped-dataset cache key: (generation, node, color mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,29 +80,114 @@ pub struct RegroupKey {
     pub color: ColorMode,
 }
 
-/// Cache of regrouped wrapper datasets (the walk is the expensive part;
-/// resizes re-layout the same groups).
-pub type RegroupCache = Mutex<HashMap<RegroupKey, Arc<Regrouped>>>;
+/// Regroup-cache entry budget: one entry per visited folder × color mode
+/// (the walk is the expensive part; resizes re-layout the same groups).
+const REGROUP_CACHE_CAP: usize = 32;
+
+/// Cache of regrouped wrapper datasets.
+pub type RegroupCache = Mutex<LruCache<RegroupKey, Arc<Regrouped>>>;
+
+/// Insertion-order LRU with a hard cap. `get` touches recency; inserts
+/// past the cap evict the least-recent entry. The previous unbounded
+/// HashMaps only emptied on a scan swap, which let per-resize keys
+/// accumulate for the lifetime of a session.
+pub struct LruCache<K, V> {
+    map: HashMap<K, V>,
+    order: VecDeque<K>,
+    cap: usize,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V> LruCache<K, V> {
+    #[must_use]
+    pub fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    /// Touch + fetch.
+    pub fn get(&mut self, key: &K) -> Option<&V> {
+        if let Some(v) = self.map.get(key) {
+            // Move the key to the back (most recent) when it is not
+            // already there (cheap common case: back of the queue).
+            if self.order.back().is_some_and(|k| k != key) {
+                self.order.retain(|k| k != key);
+                self.order.push_back(key.clone());
+            }
+            return Some(v);
+        }
+        None
+    }
+
+    /// Insert (evicting the least-recent entry past the cap).
+    pub fn insert(&mut self, key: K, value: V) {
+        if self.map.insert(key.clone(), value).is_none() {
+            self.order.push_back(key);
+        } else {
+            // Existing key refreshed: re-seat recency.
+            self.order.retain(|k| *k != key);
+            self.order.push_back(key);
+        }
+        while self.map.len() > self.cap {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Drop everything (scan swap path).
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+
+    /// Current entry count (tests + telemetry).
+    #[must_use]
+    #[allow(dead_code)] // kept for tests + telemetry; not all callers use both
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Empty (tests).
+    #[must_use]
+    #[allow(dead_code)] // kept for tests; production callers use len() instead
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
 
 /// Managed state constructor (registered in `lib.rs`).
 #[must_use]
 pub fn regroup_cache() -> RegroupCache {
-    Mutex::new(HashMap::new())
+    Mutex::new(LruCache::new(REGROUP_CACHE_CAP))
 }
 
 /// Managed state constructor (registered in `lib.rs`).
 #[must_use]
 pub fn layout_cache() -> Cache {
-    Mutex::new(HashMap::new())
+    Mutex::new(LruCache::new(LAYOUT_CACHE_CAP))
 }
 
 /// Compute (or fetch from cache) the layout for a request. The response
 /// body is the framed `[meta len][meta JSON][cells]` buffer.
 ///
+/// `(async)`: the command runs on Tauri's async runtime instead of the
+/// main thread. The cold path (an uncached by-type/by-age request first
+/// walks the entire subtree, and every resize pixel is a cold
+/// width×height key) is a multi-hundred-ms main-thread stall on
+/// million-node trees — the exact "app freezes mid-use" the owner
+/// reported. The frontend already drops superseded responses (the
+/// CanvasViz effect's `disposed` guard), so off-thread completion
+/// ordering is safe.
+///
 /// # Errors
 /// Returns a plain string message (mapped to a JS rejection) when the
 /// generation is stale, the node is missing, or geometry is invalid.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::needless_pass_by_value)] // State extraction is the tauri command contract
 pub fn get_layout(
     req: LayoutRequest,
@@ -127,11 +218,13 @@ pub fn get_layout(
 }
 
 /// Batched node-name fetch (spec §7: `get_names(ids)` contract — the UI
-/// batches label lookups; the JS side keeps an LRU).
+/// batches label lookups; the JS side keeps an LRU). `(async)` for the
+/// same off-main-thread reason as `get_layout` (label bursts land right
+/// after a paint, when the main thread is busiest).
 ///
 /// # Errors
 /// String message when the generation is stale.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::needless_pass_by_value)] // State extraction is the tauri command contract
 pub fn get_names(
     generation: u64,
@@ -260,9 +353,15 @@ fn regrouped_for(tree: &Tree, req: &LayoutRequest, cache: &RegroupCache) -> Arc<
         return Arc::clone(hit);
     }
     let now = now_unix();
-    // Per-group member budget: 9 categories / 6 buckets max, MAX_CELLS
-    // total headroom before engine truncation.
-    let member_cap = MAX_CELLS / 9;
+    // Per-group member budget, sized by the mode's ACTUAL group count
+    // (9 by-type categories, 6 by-age buckets) so each mode gets its
+    // full share of the MAX_CELLS headroom: the old flat MAX_CELLS/9
+    // under-bucketed by-age members by a third (2222 vs 3333 slots).
+    let member_cap = match req.color {
+        ColorMode::ByType => MAX_CELLS / 9,
+        ColorMode::ByAge => MAX_CELLS / 6,
+        ColorMode::ByFolder => unreachable!("guarded by the caller"),
+    };
     let data = match req.color {
         ColorMode::ByType => regroup::by_type(tree, req.node, member_cap),
         ColorMode::ByAge => regroup::by_age(tree, req.node, now, member_cap),

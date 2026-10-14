@@ -299,17 +299,21 @@
 .heat-row i {
   position: relative;
   border-radius: 6px;
-  background: color-mix(in oklab, var(--pastel-blue) calc(var(--heat, 0.35) * 100%), var(--track));
+  /* Empty cells stay visible (reference treatment: a pale, clearly-laid-out
+   * grid — never a blank void), then blue saturates with the perceptual
+   * `--heat` value (already sqrt-scaled by the component). */
+  background: color-mix(in oklab, var(--pastel-blue) calc(12% + var(--heat, 0) * 76%), var(--track));
   display: grid;
   place-items: center;
+  transition: background 160ms var(--ease-out, ease-out);
 }
 .heat-row i.busiest {
   outline: 2px solid var(--ink);
 }
-/* Significant months (≥30% of the busiest): darker fill + border + the
- * size rendered inside the cell (reference treatment). */
+/* Significant months (≥ ~5% of the busiest on the sqrt scale): darker fill
+ * + border + the size rendered inside the cell (reference treatment). */
 .heat-row i.labeled {
-  background: color-mix(in oklab, var(--pastel-blue) calc(38% + var(--heat, 0.4) * 62%), var(--track));
+  background: color-mix(in oklab, var(--pastel-blue) calc(32% + var(--heat, 0.4) * 68%), var(--track));
   box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--ink) 22%, transparent);
 }
 .heat-row i.labeled b {

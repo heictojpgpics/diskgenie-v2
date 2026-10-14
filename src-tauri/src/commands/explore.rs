@@ -540,22 +540,7 @@ pub async fn top_sizes(
     cache: State<'_, TopCache>,
 ) -> Result<TopSizes, String> {
     let scope = TopScope::parse(&scope).ok_or_else(|| format!("unknown scope {scope}"))?;
-    let arc = {
-        let guard = state.tree.read();
-        let Some(tree) = guard.as_ref() else {
-            return Err("no scan yet".into());
-        };
-        if tree.generation != generation {
-            return Err(format!(
-                "stale generation {} (current {})",
-                generation, tree.generation
-            ));
-        }
-        if tree.node(node).is_none() {
-            return Err(format!("node {node} not in tree"));
-        }
-        Arc::clone(tree)
-    };
+    let arc = resolve(&state, generation, node)?;
     let key: TopKey = (generation, node, scope as u8);
     if let Some(hit) = cache.done.lock().get(&key).cloned() {
         return Ok(apply_filter(Arc::unwrap_or_clone(hit), filter.as_deref()));
@@ -670,22 +655,7 @@ pub async fn age_map(
     state: State<'_, AppState>,
     cache: State<'_, AgeCache>,
 ) -> Result<AgeMapData, String> {
-    let arc = {
-        let guard = state.tree.read();
-        let Some(tree) = guard.as_ref() else {
-            return Err("no scan yet".into());
-        };
-        if tree.generation != generation {
-            return Err(format!(
-                "stale generation {} (current {})",
-                generation, tree.generation
-            ));
-        }
-        if tree.node(node).is_none() {
-            return Err(format!("node {node} not in tree"));
-        }
-        Arc::clone(tree)
-    };
+    let arc = resolve(&state, generation, node)?;
     let key = (generation, node);
     if let Some(hit) = cache.done.lock().get(&key).cloned() {
         return Ok(Arc::unwrap_or_clone(hit));
@@ -859,24 +829,10 @@ pub fn get_breadcrumb(
     Ok(compute_breadcrumb(&tree, node))
 }
 
-/// Shared stale-tree guard: resolves a tree snapshot (the `Arc`, so the
-/// read lock drops immediately) or errors.
-fn resolve(state: &AppState, generation: u64, node: u32) -> Result<Arc<Tree>, String> {
-    let guard = state.tree.read();
-    let Some(tree) = guard.as_ref() else {
-        return Err("no scan yet".into());
-    };
-    if tree.generation != generation {
-        return Err(format!(
-            "stale generation {} (current {})",
-            generation, tree.generation
-        ));
-    }
-    if tree.node(node).is_none() {
-        return Err(format!("node {node} not in tree"));
-    }
-    Ok(Arc::clone(tree))
-}
+/// Shared stale-tree guard (moved to `commands::resolve_node` so the
+/// other command modules share the exact wire strings; local alias keeps
+/// the call sites unchanged).
+use super::resolve_node as resolve;
 
 #[cfg(test)]
 mod tests {

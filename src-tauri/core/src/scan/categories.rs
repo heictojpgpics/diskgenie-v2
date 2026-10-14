@@ -385,17 +385,6 @@ impl FileCategory {
 }
 
 /// The apps roots resolved once at scan start (spec §4):
-/// `Program Files`, `Program Files (x86)`,
-/// `Program Files\WindowsApps`, `%LOCALAPPDATA%\Programs`.
-/// The engines resolve these to absolute paths via `SHGetKnownFolderPath`
-/// and compare each enqueued directory case-insensitively.
-pub const APPS_ROOT_NAMES: [&str; 4] = [
-    "Program Files",
-    "Program Files (x86)",
-    "Program Files\\WindowsApps",
-    "Programs", // %LOCALAPPDATA%\Programs — matched by full path
-];
-
 /// True when `name` is a protected item at the given context (spec §4):
 /// drive-root `Windows` / `Windows.old` / `pagefile.sys` / `hiberfil.sys` /
 /// `swapfile.sys` / `System Volume Information` / `$Recycle.Bin`, and

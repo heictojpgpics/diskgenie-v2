@@ -314,19 +314,7 @@ pub async fn quick_wins(
     platform: State<'_, Arc<HostPlatform>>,
     cache: State<'_, QuickWinsCache>,
 ) -> Result<Vec<QuickWinRow>, String> {
-    let tree = {
-        let guard = state.tree.read();
-        let Some(tree) = guard.as_ref() else {
-            return Err("no scan yet".into());
-        };
-        if tree.generation != generation {
-            return Err(format!(
-                "stale generation {} (current {})",
-                generation, tree.generation
-            ));
-        }
-        Arc::clone(tree)
-    };
+    let tree = super::resolve_tree(&state, generation)?;
     if let Some(hit) = cache.done.lock().get(&generation) {
         return Ok(Arc::clone(hit).as_ref().clone());
     }

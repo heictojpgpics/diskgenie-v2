@@ -135,7 +135,7 @@ export function TopBar(props: TopBarProps) {
         <button className="db-breadcrumb-back" disabled={!props.canGoBack} onClick={props.onFolderBack} aria-label="Go back" title="Go back">
           <ChevronLeftIcon size={16} />
         </button>
-        {tail.length === 0 && <span className="db-bcrumb current">—</span>}
+        {tail.length === 0 && <span className="db-bcrumb current">n/a</span>}
         {truncated && (
           <>
             <button

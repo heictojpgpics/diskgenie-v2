@@ -174,7 +174,7 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
         </h3>
         <p>
           Thank you for purchasing DiskGenie. Every tool is unlocked on this
-          device — enjoy the clean disk.
+          device. Enjoy the clean disk.
         </p>
       </div>
     );
@@ -194,11 +194,11 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
         <dl>
           <div>
             <dt>Name</dt>
-            <dd>{status?.customerName || "—"}</dd>
+            <dd>{status?.customerName || "Unknown"}</dd>
           </div>
           <div>
             <dt>Email</dt>
-            <dd>{status?.customerEmail || "—"}</dd>
+            <dd>{status?.customerEmail || "Unknown"}</dd>
           </div>
           <div>
             <dt>Plan</dt>
@@ -211,7 +211,7 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
         </dl>
         {posture === "grace" && (
           <p className="db-license-note">
-            Reconnecting validates automatically — everything keeps working offline for{" "}
+            Reconnecting validates automatically. Everything keeps working offline for{" "}
             {status?.graceDaysLeft ?? 0} more day{(status?.graceDaysLeft ?? 0) === 1 ? "" : "s"}.
           </p>
         )}
@@ -230,8 +230,8 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
           </span>
         </div>
         <p className="db-license-note">
-          DiskGenie couldn't reach the license server for over 14 days, so Pro
-          features are paused. Reconnect to the internet and check now — your
+          DiskGenie couldn’t reach the license server for over 14 days, so Pro
+          features are paused. Reconnect to the internet and check now; your
           license and data are safe.
         </p>
         {error && (
@@ -272,7 +272,7 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         )}
         {complete && !error && (
-          <div className="db-license-msg ok">Key looks complete — you're ready to activate.</div>
+          <div className="db-license-msg ok">Key looks complete. You’re ready to activate.</div>
         )}
         <div className="db-license-perks">
           <div>
@@ -338,7 +338,7 @@ export function LicenseDialog({ open, onClose }: { open: boolean; onClose: () =>
               </button>
             ) : (
               <button type="button" className="db-ink-button auto db-license-primary" onClick={openPurchase}>
-                Purchase Licence
+                Purchase License
               </button>
             ))}
           {bodyKey === "degraded" && (

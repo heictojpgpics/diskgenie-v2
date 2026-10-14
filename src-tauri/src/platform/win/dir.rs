@@ -3,6 +3,8 @@
 //! serials — plus the shell integration (open/reveal/clipboard).
 //! Verbatim move from the old single-file `win.rs` (worklog wave 2a).
 
+use std::cell::RefCell;
+
 use windows::core::PCWSTR;
 use windows::Wdk::Storage::FileSystem::{
     FileIdFullDirectoryInformation, NtQueryDirectoryFile, FILE_ID_FULL_DIR_INFORMATION,
@@ -22,6 +24,19 @@ use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use crate::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
 
 const BUFFER_WORDS: usize = 256 * 1024 / std::mem::size_of::<u64>();
+
+thread_local! {
+    /// Per-thread reusable enumeration buffer. A fresh zeroed
+    /// `vec![0; 32 K words]` (256 KiB) per directory meant 500K+
+    /// allocations of the same size class per volume walk, all funneling
+    /// through the global allocator under 16 concurrent workers —
+    /// measurable churn exactly when the scan is busiest. The kernel
+    /// overwrites the buffer on every call and `walk_records` reads only
+    /// the `returned`-byte prefix, so stale bytes between calls are
+    /// never observed. One thread enumerates one directory at a time,
+    /// so the RefCell is never double-borrowed.
+    static ENUM_BUFFER: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
 
 /// Windows implementation of the [`Platform`] trait.
 #[derive(Debug, Clone, Copy, Default)]
@@ -233,64 +248,70 @@ impl Platform for WindowsPlatform {
             }
         };
 
-        // Reusable aligned buffer.
-        let mut buffer: Vec<u64> = vec![0; BUFFER_WORDS];
-        let buffer_len = buffer.len() * std::mem::size_of::<u64>();
-        let mut restart = true;
         let mut error: Option<ListError> = None;
-
-        loop {
-            let mut iosb = IO_STATUS_BLOCK::default();
-            // SAFETY: handle is owned and valid; `buffer` is 8-byte
-            // aligned and writable for `buffer_len` bytes; `iosb` is a
-            // valid writable IO_STATUS_BLOCK; no event/APC (synchronous
-            // handle); no filename filter (enumerate all); class 38.
-            let status = unsafe {
-                NtQueryDirectoryFile(
-                    handle,
-                    None,
-                    None,
-                    None,
-                    &mut iosb,
-                    buffer.as_mut_ptr().cast::<core::ffi::c_void>(),
-                    buffer_len as u32,
-                    FileIdFullDirectoryInformation,
-                    false,
-                    None,
-                    restart,
-                )
-            };
-            restart = false;
-
-            if status == STATUS_NO_MORE_FILES {
-                break;
+        // The whole refill loop runs inside the thread-local borrow: the
+        // buffer is sized once, reused every call, and handed back intact
+        // when the enumeration ends (no realloc, no re-zeroing, no free
+        // until the worker thread itself exits).
+        ENUM_BUFFER.with_borrow_mut(|buffer| {
+            if buffer.len() < BUFFER_WORDS {
+                buffer.resize(BUFFER_WORDS, 0);
             }
-            if status.is_err() {
-                match classify_ntstatus(status) {
-                    None => break,
-                    Some(e) => {
-                        error = Some(e);
-                        break;
+            let buffer_len = buffer.len() * std::mem::size_of::<u64>();
+            let mut restart = true;
+            loop {
+                let mut iosb = IO_STATUS_BLOCK::default();
+                // SAFETY: handle is owned and valid; `buffer` is 8-byte
+                // aligned and writable for `buffer_len` bytes; `iosb` is a
+                // valid writable IO_STATUS_BLOCK; no event/APC (synchronous
+                // handle); no filename filter (enumerate all); class 38.
+                let status = unsafe {
+                    NtQueryDirectoryFile(
+                        handle,
+                        None,
+                        None,
+                        None,
+                        &mut iosb,
+                        buffer.as_mut_ptr().cast::<core::ffi::c_void>(),
+                        buffer_len as u32,
+                        FileIdFullDirectoryInformation,
+                        false,
+                        None,
+                        restart,
+                    )
+                };
+                restart = false;
+
+                if status == STATUS_NO_MORE_FILES {
+                    break;
+                }
+                if status.is_err() {
+                    match classify_ntstatus(status) {
+                        None => break,
+                        Some(e) => {
+                            error = Some(e);
+                            break;
+                        }
                     }
                 }
-            }
 
-            // Bytes written live in iosb.Information.
-            let returned = iosb.Information;
-            if returned == 0 || returned > buffer_len {
-                error = Some(ListError::Other(format!(
-                    "enumeration returned {returned} bytes for a {buffer_len}-byte buffer"
-                )));
-                break;
-            }
+                // Bytes written live in iosb.Information.
+                let returned = iosb.Information;
+                if returned == 0 || returned > buffer_len {
+                    error = Some(ListError::Other(format!(
+                        "enumeration returned {returned} bytes for a {buffer_len}-byte buffer"
+                    )));
+                    break;
+                }
 
-            let (batch, violation) = walk_records(&buffer, returned);
-            entries.extend(batch);
-            if let Some(msg) = violation {
-                error = Some(ListError::Other(msg));
-                break;
+                let (batch, violation) = walk_records(buffer, returned);
+                entries.extend(batch);
+                if let Some(msg) = violation {
+                    error = Some(ListError::Other(msg));
+                    break;
+                }
             }
-        }
+        });
 
         // SAFETY: owned handle, closed exactly once.
         unsafe { CloseHandle(handle) }.ok();

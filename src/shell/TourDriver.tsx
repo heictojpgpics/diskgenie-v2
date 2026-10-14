@@ -275,7 +275,7 @@ export function TourDriver() {
         name: "cleanup-queue",
         apply: () => {
           const folder = useExploreStore.getState().currentFolder;
-          useCleanupStore.getState().stage({ id: folder, path: "C:\\Users\\dev\\Downloads", size: 41_900_000_000, reason: "Downloads — Quick win" });
+          useCleanupStore.getState().stage({ id: folder, path: "C:\\Users\\dev\\Downloads", size: 41_900_000_000, reason: "Downloads (Quick win)" });
           window.dispatchEvent(new CustomEvent("db-open-queue"));
         },
       });

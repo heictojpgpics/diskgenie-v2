@@ -192,7 +192,7 @@ function AppShell() {
     let un: (() => void) | null = null;
     void listen<string>("admin-restart-failed", (reason) => {
       window.dispatchEvent(
-        new CustomEvent("db-toast", { detail: { text: reason || "Elevation was declined — administrator restart failed.", icon: "shield" } }),
+        new CustomEvent("db-toast", { detail: { text: reason || "Elevation was declined, so the administrator restart failed.", icon: "shield" } }),
       );
     }).then((u) => {
       un = u;
@@ -313,7 +313,7 @@ function AppShell() {
     <div className="db-app">
       {licensePosture === "degraded" && (
         <div className="db-degrade-banner" role="alert">
-          License couldn’t be verified for over 14 days — Pro features are paused until you reconnect (License in the top bar).
+          License couldn’t be verified for over 14 days. Pro features are paused until you reconnect (License in the top bar).
         </div>
       )}
       <TopBar

@@ -13,7 +13,7 @@
  *    `.message` when present, `String()` otherwise.
  */
 
-const GATE_PREFIX = /^(ACTIVATION_REQUIRED|LICENSE_STALE)\s*(?:—|--|-)?\s*/;
+const GATE_PREFIX = /^(ACTIVATION_REQUIRED|LICENSE_STALE)[\s—\-.]*/;
 
 /** Normalize any thrown value to honest, readable, banner-ready text. */
 export function userFacingError(e: unknown): string {

@@ -13,7 +13,7 @@ const UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"] as const;
 /** Format a byte count with binary units and 3 significant digits. */
 export function bytes(value: number | bigint): string {
   let v = Number(value);
-  if (!Number.isFinite(v)) return "—";
+  if (!Number.isFinite(v)) return "n/a";
   if (v < 0) return `-${bytes(-v)}`;
   if (v < 1024) return `${Math.round(v)} B`;
   // Largest k such that v >= 1024^k, k >= 1 — mirrors the Rust twin's
@@ -54,7 +54,7 @@ export function percent(fraction: number): string {
 const ago = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
 
 export function relativeAge(modified: number, now: number): string {
-  if (modified <= 0) return "—";
+  if (modified <= 0) return "n/a";
   const delta = now - modified;
   if (delta < 0) return "Just now"; // clock skew — display-only choice
   if (delta < 10) return "Just now";

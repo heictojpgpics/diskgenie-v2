@@ -29,6 +29,13 @@ pub(crate) const PAD: f32 = 3.0;
 pub(crate) const GAP: f32 = 2.0;
 /// Minimum radius to emit (sub-pixel bubbles skipped).
 pub(crate) const MIN_R: f32 = 1.0;
+
+/// Sibling count at (and below) which the dense front-chain packer runs.
+/// Beyond it the concentric-ring packer takes over: the front-chain cost
+/// is O(k³) in siblings (k placements × k²/2 tangent pairs × k overlap
+/// checks), fine at 32 (≈1M flops per parent) and unbounded-feeling at
+/// hundreds.
+const FRONT_CHAIN_MAX: usize = 32;
 /// Alpha for the primary tier — the root container, the single-child
 /// chain and the effective top-level branches: the reference's soft
 /// translucent fill so nested circles read through.
@@ -110,24 +117,29 @@ pub fn bubbles(
     })
 }
 
-/// Collect the bubble hierarchy down to `depth_left` levels (no geometry).
+/// Collect the bubble hierarchy down to `depth_left` levels (no
+/// geometry). Graceful skips (not expects): release builds
+/// panic=abort, so a corrupted CSR must drop the subtree instead of
+/// killing the app — the same hardening `names_batch` received.
 fn build_bubble(tree: &Tree, id: u32, depth_left: u32) -> Bubble {
-    let n = tree.node(id).expect("node id");
     let mut children = Vec::new();
-    if depth_left > 0 && n.is_dir() && n.child_count > 0 {
+    let n = tree.node(id);
+    let (size, is_dir, child_count) = match n {
+        Some(n) => (n.on_disk, n.is_dir(), n.child_count),
+        None => (0, false, 0),
+    };
+    if depth_left > 0 && is_dir && child_count > 0 {
         for &cid in tree.children_sorted(id) {
-            let c = tree.node(cid).expect("child id");
+            let Some(c) = tree.node(cid) else {
+                continue;
+            };
             if c.on_disk == 0 || c.is_removed() {
                 continue;
             }
             children.push(build_bubble(tree, cid, depth_left - 1));
         }
     }
-    Bubble {
-        id,
-        size: n.on_disk,
-        children,
-    }
+    Bubble { id, size, children }
 }
 
 /// One allocated child during emission: `(child index, x, y, r)` with
@@ -189,6 +201,9 @@ fn emit(
         }
         let r = (c.size as f32 / total as f32).sqrt() * usable;
         if r < MIN_R {
+            // Honest accounting: every other engine flags its culls;
+            // bubbles silently dropped sub-pixel circles.
+            *truncated = true;
             continue;
         }
         kids.push((i, 0.0, 0.0, r));
@@ -196,7 +211,7 @@ fn emit(
     if kids.is_empty() {
         return;
     }
-    ring_pack(&mut kids);
+    pack_siblings(&mut kids);
     let extent = |ks: &[Placed]| {
         ks.iter()
             .map(|&(_, x, y, r)| (x * x + y * y).sqrt() + r)
@@ -204,14 +219,14 @@ fn emit(
     };
     let needed = extent(&kids);
     if needed > usable && needed > 0.0 {
-        // Fill-fit: bisect the largest uniform scale whose ring pack
-        // still fits `usable`. The old one-shot shrink (k = usable /
-        // needed) under-filled the parent whenever the pack geometry
-        // changed discontinuously with scale — visible as a gap between
-        // the children and the parent rim (VLM: "massive unutilized
-        // gaps"). The pack now ends tangent to the inner rim, and the
-        // uniform scale keeps every sibling ratio exact (the
-        // algorithm's core guarantee) with nesting still exact.
+        // Fill-fit: bisect the largest uniform scale whose pack still fits
+        // `usable`. The old one-shot shrink (k = usable / needed)
+        // under-filled the parent whenever the pack geometry changed
+        // discontinuously with scale — visible as a gap between the
+        // children and the parent rim (VLM: "massive unutilized gaps").
+        // The pack now ends tangent to the inner rim, and the uniform
+        // scale keeps every sibling ratio exact (the algorithm's core
+        // guarantee) with nesting still exact.
         let base: Vec<f32> = kids.iter().map(|k| k.3).collect();
         let pack_at = |ks: &mut Vec<Placed>, s: f32| {
             for (k, br) in ks.iter_mut().zip(base.iter()) {
@@ -219,7 +234,7 @@ fn emit(
                 k.1 = 0.0;
                 k.2 = 0.0;
             }
-            ring_pack(ks);
+            pack_siblings(ks);
             extent(ks)
         };
         let mut lo = 0.0f32; // feasible (degenerate point)
@@ -251,6 +266,135 @@ fn emit(
             branch_level,
         );
     }
+}
+
+/// Dispatch the sibling packer: dense front-chain placement for normal
+/// fan-outs (the reference's tight organic look), concentric rings for the
+/// wide tails (bounded cost).
+fn pack_siblings(kids: &mut [Placed]) {
+    if kids.len() <= FRONT_CHAIN_MAX {
+        front_chain_pack(kids);
+    } else {
+        ring_pack(kids);
+    }
+}
+
+/// Dense circle packing (advance-front, the reference's look): circles
+/// placed one at a time, largest first, each tangent to two already-placed
+/// circles at the candidate position closest to the cluster's centroid
+/// (compactness around the growing front). Concentric-ring packing left
+/// 20-30% dead area per parent (VLM audit: "vast unused white space inside
+/// the circles; sub-bubbles clustered in the center"), because ring members
+/// orbit at a shared radius whether or not the ring is full. The
+/// front-chain hugs the already-placed cluster, so the fill ratio
+/// approaches the geometric optimum (Wang et al. 2006; the same family
+/// d3-hierarchy's `packSiblings` uses). The origin-distance greedy keeps
+/// the cluster anchored on the largest sibling (the seed at the origin):
+/// a centroid recenter was tried and REJECTED — for a dominant child
+/// plus satellites it moves the midpoint off the dominant circle, and
+/// the fill-fit bisection then scales the whole pack down to fit (the
+/// "hollow parent" regression).
+///
+/// Deterministic: stable sort + a fixed candidate scan order.
+fn front_chain_pack(kids: &mut [Placed]) {
+    // Float fuzz allowance for tangency math (pairs computed to be exactly
+    // tangent may miss by rounding; a 0.02 px slack avoids rejecting them).
+    const EPS: f32 = 0.02;
+    if kids.is_empty() {
+        return;
+    }
+    // Largest first (same ordering contract as ring_pack).
+    kids.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+    kids[0].1 = 0.0;
+    kids[0].2 = 0.0;
+    if kids.len() == 1 {
+        return;
+    }
+    // Second circle tangent to the first, along +x.
+    let r0 = kids[0].3;
+    let r1 = kids[1].3;
+    kids[1].1 = r0 + r1;
+    kids[1].2 = 0.0;
+    for k in 2..kids.len() {
+        let r = kids[k].3;
+        let mut best: Option<(f32, f32, f32)> = None; // (x, y, origin distance + r)
+        for i in 0..k {
+            for j in (i + 1)..k {
+                for (cx, cy) in tangent_centers(&kids[i], &kids[j], r) {
+                    // Reject overlaps with every placed circle.
+                    let mut overlaps = false;
+                    for p in &kids[..k] {
+                        let dx = cx - p.1;
+                        let dy = cy - p.2;
+                        let min = p.3 + r;
+                        if dx * dx + dy * dy < (min - EPS) * (min - EPS) {
+                            overlaps = true;
+                            break;
+                        }
+                    }
+                    if overlaps {
+                        continue;
+                    }
+                    // Compactness around the seed (the first circle sits at
+                    // the origin): favor interior gaps first, then the
+                    // tightest rim position. Origin-distance scoring is the
+                    // classic greedy that fills holes before growing the
+                    // enclosing circle.
+                    let score = (cx * cx + cy * cy).sqrt() + r;
+                    if !best.is_some_and(|b| b.2 <= score) {
+                        best = Some((cx, cy, score));
+                    }
+                }
+            }
+        }
+        if let Some((x, y, _)) = best {
+            kids[k].1 = x;
+            kids[k].2 = y;
+        } else {
+            // Degenerate fallback: golden-angle orbit outside the
+            // current extent (never overlaps by construction).
+            let ext = extent_of(&kids[..k]);
+            let ang = k as f32 * 2.399_963;
+            kids[k].1 = (ext + r) * ang.cos();
+            kids[k].2 = (ext + r) * ang.sin();
+        }
+    }
+}
+
+/// The two centers at distance `a.r + r` from A and `b.r + r` from B
+/// (externally tangent to both): the classic two-circle intersection.
+#[allow(clippy::many_single_char_names)] // circle geometry: centers, deltas, legs
+fn tangent_centers(a: &Placed, b: &Placed, r: f32) -> Vec<(f32, f32)> {
+    let (ax, ay, ra) = (a.1, a.2, a.3);
+    let (bx, by, rb) = (b.1, b.2, b.3);
+    let dx = bx - ax;
+    let dy = by - ay;
+    let d2 = dx * dx + dy * dy;
+    if d2 <= f32::EPSILON {
+        return Vec::new();
+    }
+    let d = d2.sqrt();
+    let da = ra + r;
+    let db = rb + r;
+    // Triangle inequality on (da, db, d).
+    if d >= da + db || d <= (da - db).abs() {
+        return Vec::new();
+    }
+    let p = (da * da - db * db + d2) / (2.0 * d);
+    let h2 = (da * da - p * p).max(0.0);
+    let h = h2.sqrt();
+    let ux = dx / d;
+    let uy = dy / d;
+    let fx = ax + p * ux;
+    let fy = ay + p * uy;
+    vec![(fx - h * uy, fy + h * ux), (fx + h * uy, fy - h * ux)]
+}
+
+/// Enclosing extent (max center-distance + radius) of a placed slice.
+fn extent_of(ks: &[Placed]) -> f32 {
+    ks.iter()
+        .map(|&(_, x, y, r)| (x * x + y * y).sqrt() + r)
+        .fold(0.0f32, f32::max)
 }
 
 /// Pack circles on concentric rings (largest first): the largest starts at
@@ -490,5 +634,47 @@ mod tests {
             (usable - extent).abs() <= 1.0,
             "pack must fill the usable radius (extent {extent} vs usable {usable})"
         );
+    }
+
+    #[test]
+    fn front_chain_never_overlaps_and_beats_ring_density() {
+        // The advance-front packer's two contracts: (1) siblings never
+        // overlap (a hair of tangency fuzz aside), and (2) the packed
+        // extent is no worse than the concentric-ring packer's for the
+        // same radii (the density win that motivated it).
+        let radii: [f32; 12] = [
+            90.0, 70.0, 60.0, 55.0, 48.0, 40.0, 33.0, 27.0, 22.0, 16.0, 11.0, 7.0,
+        ];
+        let mk = |r: f32| (0usize, 0.0, 0.0, r);
+        let mut front: Vec<Placed> = radii.iter().map(|&r| mk(r)).collect();
+        front_chain_pack(&mut front);
+        let eps = 0.05;
+        for a in 0..front.len() {
+            for b in (a + 1)..front.len() {
+                let dx = front[a].1 - front[b].1;
+                let dy = front[a].2 - front[b].2;
+                let min = front[a].3 + front[b].3;
+                assert!(
+                    dx * dx + dy * dy >= (min - eps) * (min - eps),
+                    "overlap between {a} and {b}: d={} min={}",
+                    (dx * dx + dy * dy).sqrt(),
+                    min
+                );
+            }
+        }
+        let front_extent = extent_of(&front);
+        let mut rings: Vec<Placed> = radii.iter().map(|&r| mk(r)).collect();
+        ring_pack(&mut rings);
+        let ring_extent = extent_of(&rings);
+        assert!(
+            front_extent <= ring_extent + eps,
+            "front-chain extent {front_extent} must beat or match ring extent {ring_extent}"
+        );
+        // Determinism: two runs place identically.
+        let mut again: Vec<Placed> = radii.iter().map(|&r| mk(r)).collect();
+        front_chain_pack(&mut again);
+        for (x, y) in front.iter().zip(again.iter()) {
+            assert_eq!((x.1, x.2), (y.1, y.2));
+        }
     }
 }
